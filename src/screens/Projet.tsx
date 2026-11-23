@@ -36,7 +36,12 @@ export function Projet() {
             {project.line}
           </p>
         </div>
-        <StatusPill status={project.status} label={project.statusLabel} />
+        <div className="head-side">
+          <StatusPill status={project.status} label={project.statusLabel} />
+          <Link className="btn sm" to={`/projets/${project.id}/equipe`}>
+            Équipe
+          </Link>
+        </div>
       </header>
       <nav aria-label={`Sections de ${project.name}`} style={{ padding: '0 16px 12px' }}>
         <div className="seg">

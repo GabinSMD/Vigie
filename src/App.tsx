@@ -4,6 +4,7 @@ import { TabBar } from './components/TabBar';
 import { Toast } from './components/Toast';
 import { StoreProvider, pendingItems, useStore, type DemoState } from './data/store';
 import { Accueil } from './screens/Accueil';
+import { Equipe } from './screens/Equipe';
 import { Lancer } from './screens/Lancer';
 import { NotFound } from './screens/NotFound';
 import { Projet } from './screens/Projet';
@@ -18,6 +19,7 @@ export function AppRoutes() {
       <Route path="/" element={<Accueil />} />
       <Route path="/projets" element={<Projets />} />
       <Route path="/projets/:projectId" element={<Projet />} />
+      <Route path="/projets/:projectId/equipe" element={<Equipe />} />
       <Route path="/projets/:projectId/:tab" element={<Projet />} />
       <Route path="/projets/:projectId/sessions/:sessionId" element={<Session />} />
       <Route path="/projets/:projectId/pr/:prNumber" element={<PullRequest />} />
