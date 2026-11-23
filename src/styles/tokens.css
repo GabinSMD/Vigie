@@ -1,0 +1,47 @@
+/* Tour de contrôle — jetons issus du design system (tokens.json).
+   Thème clair « plein soleil » par défaut, sombre selon le système ou data-theme. */
+:root {
+  --surface-base: #f2f3f0; --surface-raised: #ffffff; --surface-sunken: #e6e9e5;
+  --ink: #10181b; --ink-muted: #44525a;
+  --border-strong: #7b8a90; --border-subtle: #d3d8d4;
+  --accent: #1a4fa0; --on-accent: #ffffff; --accent-soft: #dce7f7;
+  --ok: #007565; --ok-soft: #d8f0eb;
+  --attention: #8a5200; --attention-soft: #fbe9c6;
+  --blocked: #962410; --blocked-soft: #faded7;
+  --scrim: #10181b99;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-base: #0e1417; --surface-raised: #172126; --surface-sunken: #091013;
+    --ink: #eef3f2; --ink-muted: #b4c1c6;
+    --border-strong: #71858d; --border-subtle: #26343a;
+    --accent: #8db6f2; --on-accent: #07142b; --accent-soft: #16294a;
+    --ok: #5fd6c4; --ok-soft: #0f302b;
+    --attention: #f2b84b; --attention-soft: #3a2a08;
+    --blocked: #ff9a82; --blocked-soft: #44180f;
+    --scrim: #000000b3;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --surface-base: #0e1417; --surface-raised: #172126; --surface-sunken: #091013;
+  --ink: #eef3f2; --ink-muted: #b4c1c6;
+  --border-strong: #71858d; --border-subtle: #26343a;
+  --accent: #8db6f2; --on-accent: #07142b; --accent-soft: #16294a;
+  --ok: #5fd6c4; --ok-soft: #0f302b;
+  --attention: #f2b84b; --attention-soft: #3a2a08;
+  --blocked: #ff9a82; --blocked-soft: #44180f;
+  --scrim: #000000b3;
+  color-scheme: dark;
+}
+
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --touch-min: 44px; --touch-primary: 52px;
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-sheet: 24px; --radius-pill: 999px;
+  --font-sans: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
