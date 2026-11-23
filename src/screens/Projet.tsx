@@ -4,7 +4,7 @@ import { ActionRow } from '../components/ActionRow';
 import { BackLink } from '../components/BackLink';
 import { CostGauge } from '../components/CostGauge';
 import { StatusPill } from '../components/StatusPill';
-import { COST_ALERT_THRESHOLD, findProject, pullRequests, sessions } from '../data/mock';
+import { findProject, pullRequests, sessions } from '../data/mock';
 import { useStore } from '../data/store';
 import type { Project } from '../data/types';
 import { formatCost, gauge } from '../lib/format';
@@ -180,7 +180,7 @@ function IssuesTab({ project }: { project: Project }) {
           statusLabel="En file"
           title={issue.title}
         >
-          <Link className="btn" to="/lancer">
+          <Link className="btn" to={`/lancer?projet=${project.id}&issue=${issue.number.slice(1)}`}>
             Lancer une session
           </Link>
         </ActionRow>
@@ -190,17 +190,19 @@ function IssuesTab({ project }: { project: Project }) {
 }
 
 function CostTab({ project }: { project: Project }) {
-  const { level } = gauge(project.costToday, project.costCap, COST_ALERT_THRESHOLD);
-  const rest = project.costCap - project.costToday;
+  const { settings } = useStore().state;
+  const cap = settings.projectCaps[project.id] ?? project.costCap;
+  const { level } = gauge(project.costToday, cap, settings.threshold);
+  const rest = cap - project.costToday;
   return (
     <>
       <section className="card" aria-label="Coût du jour">
         <span className="k">Coût du jour</span>
         <div className="row sp" style={{ alignItems: 'baseline' }}>
           <span className="num">{formatCost(project.costToday)}</span>
-          <span className="det">plafond {formatCost(project.costCap)}</span>
+          <span className="det">plafond {formatCost(cap)}</span>
         </div>
-        <CostGauge label="Consommé" cost={project.costToday} cap={project.costCap} />
+        <CostGauge label="Consommé" cost={project.costToday} cap={cap} threshold={settings.threshold} />
         <p className="det">
           {level === 'plafond'
             ? 'Plafond du projet atteint : les sessions sont en pause.'

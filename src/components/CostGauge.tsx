@@ -5,11 +5,13 @@ interface Props {
   label: string;
   cost: number;
   cap: number;
+  /** Seuil d'alerte en %, réglable dans « Réglages ». */
+  threshold?: number;
 }
 
 /** Jauge de coût : chiffre écrit en toutes lettres, la barre ne fait que l'illustrer. */
-export function CostGauge({ label, cost, cap }: Props) {
-  const { pct, level } = gauge(cost, cap, COST_ALERT_THRESHOLD);
+export function CostGauge({ label, cost, cap, threshold = COST_ALERT_THRESHOLD }: Props) {
+  const { pct, level } = gauge(cost, cap, threshold);
   const barClass = level === 'plafond' ? 'blk' : level === 'alerte' ? 'warn' : undefined;
   return (
     <>

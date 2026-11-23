@@ -39,6 +39,12 @@ const paths = {
     </>
   ),
   offline: <path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0M12 19.5v.1M3 3l18 18" />,
+  mic: (
+    <>
+      <rect x="9" y="3" width="6" height="12" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </>
+  ),
   retry: <path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" />,
 } as const;
 
