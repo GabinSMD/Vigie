@@ -45,7 +45,8 @@ export function Lancer() {
         dispatch({ type: 'notify', message: 'Choisis une issue, ou passe en texte libre.' });
         return;
       }
-      what = `Issue ${issue}`;
+      const title = project.issues.find((i) => i.number === issue)?.title;
+      what = title ? `Issue ${issue} : ${title}` : `Issue ${issue}`;
     } else {
       const trimmed = text.trim();
       if (!trimmed) {
