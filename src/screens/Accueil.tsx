@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ActionRow } from '../components/ActionRow';
 import { Icon } from '../components/Icon';
+import { LaunchedList } from '../components/LaunchedRow';
 import { findProject, findSession } from '../data/mock';
-import { pendingItems, useStore } from '../data/store';
+import { pendingItems, useStore, type Launched } from '../data/store';
 import type { ActionItem } from '../data/types';
 import { plural } from '../lib/format';
 import { ConsigneSheet } from '../sheets/ConsigneSheet';
@@ -27,7 +28,7 @@ export function Accueil() {
   const close = () => setSheet(null);
 
   if (demo === 'chargement') return <Loading />;
-  if (demo === 'vide') return <Empty />;
+  if (demo === 'vide') return <Empty launched={state.launched} />;
 
   const offline = demo === 'horsligne';
   const failing = demo === 'erreur';
@@ -36,7 +37,7 @@ export function Accueil() {
 
   const blocking = items.filter((i) => i.kind === 'blocage');
   const toValidate = items.filter((i) => i.kind !== 'blocage');
-  if (items.length === 0) return <Empty />;
+  if (items.length === 0) return <Empty launched={state.launched} />;
 
   const subtitle = offline
     ? 'Données de 14 h 02'
@@ -175,6 +176,7 @@ export function Accueil() {
       )}
 
       <div className="body">
+        <LaunchedList sessions={state.launched} />
         {blocking.length > 0 && (
           <section aria-labelledby="sec-blk" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <h2 id="sec-blk" className="h2">
@@ -244,7 +246,7 @@ function Loading() {
   );
 }
 
-function Empty() {
+function Empty({ launched }: { launched: Launched[] }) {
   return (
     <>
       <header className="head">
@@ -255,6 +257,11 @@ function Empty() {
           </p>
         </div>
       </header>
+      {launched.length > 0 && (
+        <div className="body" style={{ flex: 'none' }}>
+          <LaunchedList sessions={launched} />
+        </div>
+      )}
       <div className="state">
         <div className="bigico" aria-hidden="true">
           <Icon name="check" className="" />

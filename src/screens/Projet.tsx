@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ActionRow } from '../components/ActionRow';
 import { BackLink } from '../components/BackLink';
 import { CostGauge } from '../components/CostGauge';
+import { LaunchedList } from '../components/LaunchedRow';
 import { StatusPill } from '../components/StatusPill';
 import { findProject, pullRequests, sessions } from '../data/mock';
 import { useStore } from '../data/store';
@@ -59,11 +60,13 @@ export function Projet() {
 function SessionsTab({ project }: { project: Project }) {
   const { state } = useStore();
   const list = sessions.filter((s) => project.sessionIds.includes(s.id));
-  if (list.length === 0) return <p className="det">Aucune session pour ce projet aujourd'hui.</p>;
+  const launched = state.launched.filter((l) => l.projectId === project.id);
+  if (list.length === 0 && launched.length === 0) return <p className="det">Aucune session pour ce projet aujourd'hui.</p>;
   const firstWaiting = list.find((s) => s.status === 'attention' && !state.consignes[s.id]?.length);
 
   return (
     <>
+      <LaunchedList sessions={launched} showProject={false} />
       {list.map((s) => {
         const sent = Boolean(state.consignes[s.id]?.length);
         return (
