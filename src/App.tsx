@@ -4,11 +4,12 @@ import { TabBar } from './components/TabBar';
 import { Toast } from './components/Toast';
 import { StoreProvider, pendingItems, useStore, type DemoState } from './data/store';
 import { Accueil } from './screens/Accueil';
-import { Bientot } from './screens/Bientot';
+import { Lancer } from './screens/Lancer';
 import { NotFound } from './screens/NotFound';
 import { Projet } from './screens/Projet';
 import { Projets } from './screens/Projets';
 import { PullRequest } from './screens/PullRequest';
+import { Reglages } from './screens/Reglages';
 import { Session } from './screens/Session';
 
 export function AppRoutes() {
@@ -20,8 +21,8 @@ export function AppRoutes() {
       <Route path="/projets/:projectId/:tab" element={<Projet />} />
       <Route path="/projets/:projectId/sessions/:sessionId" element={<Session />} />
       <Route path="/projets/:projectId/pr/:prNumber" element={<PullRequest />} />
-      <Route path="/lancer" element={<Bientot title="Lancer du travail" />} />
-      <Route path="/reglages" element={<Bientot title="Réglages" />} />
+      <Route path="/lancer" element={<Lancer />} />
+      <Route path="/reglages" element={<Reglages />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
