@@ -1,0 +1,20 @@
+{
+  "name": "vigie-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "API de lecture seule de Vigie : GitHub (PR, CI, issues) et instantané des sessions.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20250610.0",
+    "@types/node": "22.15.30",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4",
+    "wrangler": "4.19.1"
+  }
+}

@@ -6,7 +6,8 @@ import { DecisionCard, isDecision } from '../components/DecisionCard';
 import { CostGauge } from '../components/CostGauge';
 import { LaunchedList } from '../components/LaunchedRow';
 import { StatusPill } from '../components/StatusPill';
-import { findProject, pullRequests, sessions } from '../data/mock';
+import { ActionButton } from '../components/ActionButton';
+import { useData } from '../data/source';
 import { pendingItems, useStore } from '../data/store';
 import type { Project } from '../data/types';
 import { formatCost, gauge } from '../lib/format';
@@ -23,9 +24,12 @@ type TabId = (typeof TABS)[number]['id'];
 
 export function Projet() {
   const { projectId, tab } = useParams();
+  const { live, findProject } = useData();
   const project = findProject(projectId);
   if (!project) return <NotFound />;
-  const current: TabId = TABS.some((t) => t.id === tab) ? (tab as TabId) : 'sessions';
+  /* Données réelles : pas d'onglet Coût (D7). */
+  const tabs = live ? TABS.filter((t) => t.id !== 'cout') : TABS;
+  const current: TabId = tabs.some((t) => t.id === tab) ? (tab as TabId) : 'sessions';
 
   return (
     <>
@@ -46,7 +50,7 @@ export function Projet() {
       </header>
       <nav aria-label={`Sections de ${project.name}`} style={{ padding: '0 16px 12px' }}>
         <div className="seg">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <Link key={t.id} to={`/projets/${project.id}/${t.id}`} aria-current={t.id === current ? 'page' : undefined}>
               {t.label}
             </Link>
@@ -65,9 +69,10 @@ export function Projet() {
 
 function SessionsTab({ project }: { project: Project }) {
   const { state } = useStore();
+  const { sessions, actionItems } = useData();
   const list = sessions.filter((s) => project.sessionIds.includes(s.id));
   const launched = state.launched.filter((l) => l.projectId === project.id);
-  const decisions = pendingItems(state).filter((i) => i.projectId === project.id && isDecision(i));
+  const decisions = pendingItems(state, actionItems).filter((i) => i.projectId === project.id && isDecision(i));
   if (list.length === 0 && launched.length === 0 && decisions.length === 0)
     return <p className="det">Aucune session pour ce projet aujourd'hui.</p>;
   const firstWaiting = decisions.length > 0 ? undefined : list.find((s) => s.status === 'attention' && !state.consignes[s.id]?.length);
@@ -109,6 +114,7 @@ function SessionsTab({ project }: { project: Project }) {
 
 function PrTab({ project }: { project: Project }) {
   const { state } = useStore();
+  const { live, pullRequests } = useData();
   const [merging, setMerging] = useState<string | null>(null);
   const open = pullRequests.filter((pr) => pr.projectId === project.id && !state.merged.includes(pr.number));
   const justMerged = pullRequests.filter((pr) => pr.projectId === project.id && state.merged.includes(pr.number));
@@ -129,11 +135,16 @@ function PrTab({ project }: { project: Project }) {
           title={pr.title}
           detail={pr.line}
         >
-          {!pr.draft && (
-            <button type="button" className={index === 0 ? 'btn pri' : 'btn'} onClick={() => setMerging(pr.number)}>
-              Fusionner
-            </button>
-          )}
+          {!pr.draft &&
+            (live ? (
+              <a className={index === 0 ? 'btn pri' : 'btn'} href={pr.url} target="_blank" rel="noreferrer noopener">
+                Ouvrir sur GitHub<span className="sr-only"> (nouvel onglet)</span>
+              </a>
+            ) : (
+              <button type="button" className={index === 0 ? 'btn pri' : 'btn'} onClick={() => setMerging(pr.number)}>
+                Fusionner
+              </button>
+            ))}
           <Link className="btn" to={`/projets/${project.id}/pr/${pr.number.slice(1)}`}>
             Détail
           </Link>
@@ -177,7 +188,9 @@ function ClosedRow({ number, title, when, merged }: { number: string; title: str
 }
 
 function IssuesTab({ project }: { project: Project }) {
-  if (project.issues.length === 0) return <p className="det">Pas d'issue détaillée pour ce projet dans la démo.</p>;
+  const { live } = useData();
+  if (project.issues.length === 0)
+    return <p className="det">{live ? 'Aucune issue ouverte.' : "Pas d'issue détaillée pour ce projet dans la démo."}</p>;
   return (
     <>
       {project.issues.map((issue) => (
@@ -192,9 +205,18 @@ function IssuesTab({ project }: { project: Project }) {
           statusLabel="En file"
           title={issue.title}
         >
-          <Link className="btn" to={`/lancer?projet=${project.id}&issue=${issue.number.slice(1)}`}>
-            Lancer une session
-          </Link>
+          {live ? (
+            <>
+              <ActionButton live>Lancer une session</ActionButton>
+              <a className="btn" href={issue.url} target="_blank" rel="noreferrer noopener">
+                Ouvrir sur GitHub<span className="sr-only"> (nouvel onglet)</span>
+              </a>
+            </>
+          ) : (
+            <Link className="btn" to={`/lancer?projet=${project.id}&issue=${issue.number.slice(1)}`}>
+              Lancer une session
+            </Link>
+          )}
         </ActionRow>
       ))}
     </>

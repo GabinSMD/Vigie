@@ -27,7 +27,7 @@ Aujourd'hui tout vient de `src/data/mock.ts`, et chaque décision ne change qu'u
 
 ## 2. Contrainte principale : l'accès aux sessions
 
-À ma connaissance (**à vérifier** avant de coder), il n'y a pas d'API publique documentée pour lister les sessions Claude Code cloud d'un compte avec un simple jeton. Ce qui marche aujourd'hui, c'est ce qu'utilise le pilote : les outils `claude-code-remote` (`list_sessions`, `list_events`, `get_session`, `send_message`, `create_session`), disponibles **depuis une session Claude Code**.
+**Vérifié le 24/11/2026 : hypothèse confirmée.** La documentation officielle des sessions cloud (<https://code.claude.com/docs/en/claude-code-on-the-web>) ne décrit aucune API HTTP publique pour lister ou lire les sessions : elles se gèrent depuis claude.ai/code, l'application mobile, ou la CLI (`claude --teleport` pour les reprendre, `claude -p "…" --cloud <id>` pour leur envoyer un message). La recherche renvoie bien une API « Sessions » sur platform.claude.com, mais c'est celle des *Managed Agents* (`GET /v1/sessions`, clé d'API) : un autre produit, qui ne liste pas les sessions Claude Code cloud. Ce qui marche aujourd'hui, c'est ce qu'utilise le pilote : les outils `claude-code-remote` (`list_sessions`, `list_events`, `get_session`, `send_message`, `create_session`), disponibles **depuis une session Claude Code**.
 
 Conséquence : Vigie ne doit pas parler directement aux sessions. Le **pilote** (qui tourne déjà et a ces droits) sert d'intermédiaire.
 
@@ -74,7 +74,7 @@ Recommandation : **Cloudflare**, Pages pour l'app, un Worker pour l'API, **KV** 
 
 ## 6. Coûts : point ouvert
 
-Les outils `claude-code-remote` ne donnent pas de coût par session (à vérifier). Trois pistes, de la plus simple à la plus juste :
+**Vérifié le 24/11/2026 : hypothèse nuancée.** La documentation officielle dit seulement qu'une session cloud « compte dans les limites de ton forfait » et qu'il n'y a pas de facturation séparée de la VM : pas de coût par session côté produit. Côté outils, un indice disait que `get_session` (`claude-code-remote`) renvoie `external_metadata.usage.cost_usd`. Sur la session qui a codé cette étape, `get_session` renvoie bien `external_metadata` (modèle, jetons de contexte, limites de débit…) mais **sans** champ `usage` ni `cost_usd` : le champ n'a pas été observé. Il peut n'exister que pour certaines sessions ou après un tour terminé ; **le pilote doit le vérifier sur ses propres lectures** avant de s'y fier. L'instantané prévoit donc un `costUsd` facultatif (voir `docs/instantane-sessions.md`), ignoré par l'écran. Trois pistes, de la plus simple à la plus juste :
 1. masquer l'onglet Coût et les jauges tant qu'aucune source fiable n'existe ;
 2. une estimation (durée ou tours de session × forfait) clairement marquée « estimé » ;
 3. les chiffres de la console d'utilisation, s'il existe une API accessible à ton compte.
@@ -106,4 +106,4 @@ Chaque étape fait l'objet d'une issue et d'une PR séparées.
 
 Conséquence de D8 : les dépôts sont répartis sur trois comptes GitHub (`GabinSMD`, `SIMOND-ANCE-BROS`, `DentiSync`). La GitHub App « Vigie » devra être installée sur chacun, limitée aux dépôts listés ; le Worker garde un identifiant d'installation par compte.
 
-Avant de coder l'étape 1, il faut aussi **vérifier** les deux hypothèses marquées « à vérifier » (pas d'API publique des sessions ; pas de coût par session).
+Les deux hypothèses « à vérifier » l'ont été le 24/11/2026 (§ 2 et § 6) : aucune ne change l'architecture. La seule inconnue restante : le champ `cost_usd` de `get_session`, à confirmer par le pilote.

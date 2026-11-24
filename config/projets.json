@@ -1,0 +1,13 @@
+{
+  "comptes": ["GabinSMD", "SIMOND-ANCE-BROS", "DentiSync"],
+  "projets": [
+    { "id": "ecole-saas", "owner": "SIMOND-ANCE-BROS", "repo": "ecole-saas", "nom": "ecole-saas" },
+    { "id": "ffd-connect", "owner": "SIMOND-ANCE-BROS", "repo": "FFD-Connect", "nom": "FFD-Connect" },
+    { "id": "treizero", "owner": "GabinSMD", "repo": "treizero", "nom": "treizero" },
+    { "id": "streambox", "owner": "GabinSMD", "repo": "StreamBox", "nom": "StreamBox" },
+    { "id": "vigie", "owner": "GabinSMD", "repo": "Vigie", "nom": "Vigie" },
+    { "id": "souhaits", "owner": "GabinSMD", "repo": "souhaits", "nom": "souhaits" },
+    { "id": "waterline", "owner": "GabinSMD", "repo": "waterline", "nom": "Waterline" },
+    { "id": "dentisync", "owner": "DentiSync", "repo": "dentisync", "nom": "DentiSync" }
+  ]
+}

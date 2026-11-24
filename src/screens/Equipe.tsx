@@ -1,9 +1,10 @@
 import { Link, useParams } from 'react-router-dom';
 import { BackLink } from '../components/BackLink';
 import { StatusPill } from '../components/StatusPill';
-import { findProject, sessions } from '../data/mock';
+import { ActionButton } from '../components/ActionButton';
+import { useData } from '../data/source';
 import { useStore, type Role } from '../data/store';
-import type { Project } from '../data/types';
+import type { Project, Session } from '../data/types';
 import { formatCap } from '../lib/format';
 import { NotFound } from './NotFound';
 
@@ -15,7 +16,7 @@ const ROLE_JOB: Record<Role, string> = {
 };
 
 /** Ce que traite un rôle dans le projet : la ref de chaque session (issue, sinon titre), puis les sessions lancées. */
-function workOf(project: Project, role: Role, launched: { role: Role; what: string }[]): string[] {
+function workOf(sessions: Session[], project: Project, role: Role, launched: { role: Role; what: string }[]): string[] {
   const own = sessions
     .filter((s) => project.sessionIds.includes(s.id) && s.role === role)
     .map((s) => s.ref ?? s.title);
@@ -41,11 +42,12 @@ function RoleNode({ role, work, moi }: { role: string; work?: string[]; moi?: bo
 export function Equipe() {
   const { projectId } = useParams();
   const { state } = useStore();
+  const { live, sessions, findProject } = useData();
   const project = findProject(projectId);
   if (!project) return <NotFound />;
 
   const launched = state.launched.filter((l) => l.projectId === project.id);
-  const work = (role: Role) => workOf(project, role, launched);
+  const work = (role: Role) => workOf(sessions, project, role, launched);
   const { settings } = state;
   const auto = settings.autoMerge.includes(project.id);
   const costCap = settings.projectCaps[project.id] ?? project.costCap;
@@ -86,21 +88,33 @@ export function Equipe() {
 
         <section className="card" aria-label="Règles d'autonomie">
           <span className="k">Règles d'autonomie</span>
-          <div className="row sp">
-            <span>Fusion automatique</span>
-            <StatusPill status="neutre" label={auto ? 'Auto' : 'Manuelle'} />
-          </div>
-          <div className="row sp">
-            <span>Sessions lancées par jour</span>
-            <b>{settings.sessionCap} max</b>
-          </div>
-          <div className="row sp">
-            <span>Coût par jour</span>
-            <b>{formatCap(costCap)} max</b>
-          </div>
-          <Link className="btn full" style={{ marginTop: 4 }} to="/reglages">
-            Modifier les règles
-          </Link>
+          {live ? (
+            <p className="det">Les règles seront appliquées par le pilote à l'étape 2. Rien n'est modifiable pour l'instant.</p>
+          ) : (
+            <>
+              <div className="row sp">
+                <span>Fusion automatique</span>
+                <StatusPill status="neutre" label={auto ? 'Auto' : 'Manuelle'} />
+              </div>
+              <div className="row sp">
+                <span>Sessions lancées par jour</span>
+                <b>{settings.sessionCap} max</b>
+              </div>
+              <div className="row sp">
+                <span>Coût par jour</span>
+                <b>{formatCap(costCap)} max</b>
+              </div>
+            </>
+          )}
+          {live ? (
+            <ActionButton live className="btn full">
+              Modifier les règles
+            </ActionButton>
+          ) : (
+            <Link className="btn full" style={{ marginTop: 4 }} to="/reglages">
+              Modifier les règles
+            </Link>
+          )}
         </section>
       </div>
     </>

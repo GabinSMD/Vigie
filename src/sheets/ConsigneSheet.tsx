@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { ActionSheet } from '../components/ActionSheet';
-import { findSession } from '../data/mock';
+import { useData } from '../data/source';
 import { useStore } from '../data/store';
 
 interface Props {
@@ -12,6 +12,7 @@ const SUGGESTION = 'Pousse la branche.';
 
 export function ConsigneSheet({ sessionId, onClose }: Props) {
   const { dispatch } = useStore();
+  const { findSession } = useData();
   const session = findSession(sessionId ?? undefined);
   const [text, setText] = useState(SUGGESTION);
   const fieldId = useId();

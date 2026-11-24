@@ -4,10 +4,11 @@ import { ActionRow } from '../components/ActionRow';
 import { DecisionCard } from '../components/DecisionCard';
 import { Icon } from '../components/Icon';
 import { LaunchedList } from '../components/LaunchedRow';
-import { findProject, findSession } from '../data/mock';
+import { ActionButton } from '../components/ActionButton';
+import { useData } from '../data/source';
 import { pendingItems, useStore, type Launched } from '../data/store';
 import type { ActionItem } from '../data/types';
-import { plural } from '../lib/format';
+import { clockFr, plural } from '../lib/format';
 import { ConsigneSheet } from '../sheets/ConsigneSheet';
 import { KeySheet } from '../sheets/KeySheet';
 import { MergeSheet } from '../sheets/MergeSheet';
@@ -16,31 +17,33 @@ import { MergeSheet } from '../sheets/MergeSheet';
 export type HomeDemo = 'chargement' | 'vide' | 'horsligne' | 'erreur';
 const DEMOS: HomeDemo[] = ['chargement', 'vide', 'horsligne', 'erreur'];
 
-const projectName = (id: string) => findProject(id)?.name ?? id;
-
 export function Accueil() {
   const [params] = useSearchParams();
   const raw = params.get('etat');
-  const demo = DEMOS.includes(raw as HomeDemo) ? (raw as HomeDemo) : null;
+  const { live, findProject, findSession, findPullRequest, actionItems, snapshotAt, loading, error } = useData();
+  const demo = !live && DEMOS.includes(raw as HomeDemo) ? (raw as HomeDemo) : null;
+  const projectName = (id: string) => findProject(id)?.name ?? id;
   const { state } = useStore();
   const [sheet, setSheet] = useState<
     { kind: 'key' } | { kind: 'merge'; projectId: string; pr: string } | { kind: 'consigne'; session: string } | null
   >(null);
   const close = () => setSheet(null);
 
-  if (demo === 'chargement') return <Loading />;
+  if (demo === 'chargement' || (live && loading)) return <Loading />;
   if (demo === 'vide') return <Empty launched={state.launched} />;
 
   const offline = demo === 'horsligne';
   const failing = demo === 'erreur';
-  let items = pendingItems(state);
+  let items = pendingItems(state, actionItems);
   if (failing) items = items.filter((i) => i.projectId !== 'treizero');
 
   const blocking = items.filter((i) => i.kind === 'blocage');
   const toValidate = items.filter((i) => i.kind !== 'blocage');
-  if (items.length === 0) return <Empty launched={state.launched} />;
+  if (items.length === 0 && !error) return <Empty launched={state.launched} snapshotAt={live ? snapshotAt : undefined} />;
 
-  const subtitle = offline
+  const subtitle = live
+    ? `${plural(items.length, 'élément')}${snapshotAt ? ` · Données de ${clockFr(snapshotAt)}` : ' · Pas encore de données de sessions'}`
+    : offline
     ? 'Données de 14 h 02'
     : failing
       ? 'Une erreur empêche la mise à jour de treizero'
@@ -55,9 +58,9 @@ export function Accueil() {
       case 'blocage':
         return (
           <ActionRow key={item.id} urgent meta={`${projectName(item.projectId)} · Session`} status="bloque" title={item.title} detail={item.detail}>
-            <button type="button" className={pri} disabled={offline} onClick={() => setSheet({ kind: 'key' })}>
+            <ActionButton live={live} className={pri} disabled={offline} onClick={() => setSheet({ kind: 'key' })}>
               Voir où poser la clé
-            </button>
+            </ActionButton>
             <Link className="btn" to={`/projets/${item.projectId}/sessions/${item.sessionId}`}>
               Ouvrir la session
             </Link>
@@ -75,9 +78,9 @@ export function Accueil() {
             status="attention"
             title={item.title}
           >
-            <button type="button" className={pri} disabled={offline} onClick={() => setSheet({ kind: 'consigne', session: item.sessionId })}>
+            <ActionButton live={live} className={pri} disabled={offline} onClick={() => setSheet({ kind: 'consigne', session: item.sessionId })}>
               Envoyer une consigne
-            </button>
+            </ActionButton>
             <Link className="btn" to={`/projets/${item.projectId}/sessions/${item.sessionId}`}>
               Ouvrir la session
             </Link>
@@ -97,9 +100,20 @@ export function Accueil() {
             title={item.title}
             detail={offline ? "Ta fusion n'est pas partie : réessaie quand le réseau revient." : item.detail}
           >
-            <button type="button" className={pri} disabled={offline} onClick={() => setSheet({ kind: 'merge', projectId: item.projectId, pr: item.prNumber })}>
-              Fusionner
-            </button>
+            {live ? (
+              <a
+                className={pri}
+                href={findPullRequest(item.projectId, item.prNumber.slice(1))?.url}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                Ouvrir sur GitHub<span className="sr-only"> (nouvel onglet)</span>
+              </a>
+            ) : (
+              <button type="button" className={pri} disabled={offline} onClick={() => setSheet({ kind: 'merge', projectId: item.projectId, pr: item.prNumber })}>
+                Fusionner
+              </button>
+            )}
             <Link className="btn" to={`/projets/${item.projectId}/pr/${item.prNumber.slice(1)}`}>
               Ouvrir la relecture
             </Link>
@@ -126,6 +140,23 @@ export function Accueil() {
         <div className="banner att" role="status">
           <Icon name="offline" className="" />
           <span style={{ flex: 1 }}>Pas de réseau. Les actions sont désactivées.</span>
+        </div>
+      )}
+
+      {live && error && (
+        <div className="banner blk" role="alert">
+          <div className="row">
+            <Icon name="blocked" className="" />
+            <span>Lecture impossible</span>
+          </div>
+          <p className="det strong-ink">{error}. Recharge la page ; si ça persiste, vérifie le Worker (docs/mise-en-route.md).</p>
+        </div>
+      )}
+
+      {live && !error && !snapshotAt && (
+        <div className="banner att" role="status">
+          <Icon name="offline" className="" />
+          <span style={{ flex: 1 }}>Le pilote n'a pas encore écrit d'instantané : seules les PR sont à jour.</span>
         </div>
       )}
 
@@ -218,14 +249,14 @@ function Loading() {
   );
 }
 
-function Empty({ launched }: { launched: Launched[] }) {
+function Empty({ launched, snapshotAt }: { launched: Launched[]; snapshotAt?: string | null }) {
   return (
     <>
       <header className="head">
         <div>
           <h1 className="h1">À faire par toi</h1>
           <p className="det" style={{ marginTop: 4 }}>
-            0 élément
+            0 élément{snapshotAt ? ` · Données de ${clockFr(snapshotAt)}` : ''}
           </p>
         </div>
       </header>

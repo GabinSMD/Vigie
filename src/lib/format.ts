@@ -18,3 +18,29 @@ export function gauge(cost: number, cap: number, threshold: number) {
 /** « 1 élément », « 3 éléments ». */
 export const plural = (n: number, singular: string, pluralForm = `${singular}s`) =>
   `${n} ${n > 1 ? pluralForm : singular}`;
+
+/** « il y a 12 min », « il y a 1 h 05 », « il y a 3 jours » à partir d'une date ISO. */
+export function relativeFr(iso: string, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000));
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rest = minutes % 60;
+    return rest === 0 ? `il y a ${hours} h` : `il y a ${hours} h ${String(rest).padStart(2, '0')}`;
+  }
+  const days = Math.floor(hours / 24);
+  return `il y a ${plural(days, 'jour')}`;
+}
+
+/** « 14 h 02 », heure de Paris, pour l'état « Données de 14 h 02 ». */
+export function clockFr(iso: string): string {
+  const parts = new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'Europe/Paris',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('hour')} h ${get('minute')}`;
+}

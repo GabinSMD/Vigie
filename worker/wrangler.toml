@@ -1,0 +1,24 @@
+# Worker Vigie : API de lecture seule (étape 1).
+# Les valeurs ci-dessous sont FACTICES : rien n'est déployé tant que tu ne les remplaces pas.
+# Guide pas à pas : docs/mise-en-route.md
+
+name = "vigie-api"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+# À FAIRE PAR GABIN : remplace "example.org" par ton domaine géré chez Cloudflare (décision D9).
+# L'app (Pages) et ce Worker partagent le même nom d'hôte : pas de CORS, et Cloudflare Access protège les deux.
+routes = [
+  { pattern = "vigie.example.org/api/*", zone_name = "example.org" }
+]
+
+[[kv_namespaces]]
+binding = "VIGIE_SNAPSHOT"
+# À FAIRE PAR GABIN : colle l'identifiant rendu par `npx wrangler kv namespace create VIGIE_SNAPSHOT`.
+id = "00000000000000000000000000000000"
+
+# SECRETS : ne jamais les écrire ici. Pose-les avec `npx wrangler secret put <NOM>` :
+#   GITHUB_APP_ID            identifiant numérique de la GitHub App « Vigie »
+#   GITHUB_APP_PRIVATE_KEY   clé privée de l'App, au format PKCS#8 (voir le guide)
+#   GITHUB_INSTALLATIONS     JSON : {"GabinSMD": 111, "SIMOND-ANCE-BROS": 222, "DentiSync": 333}
+#                            (identifiant d'installation de l'App sur chaque compte)

@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
-import { findProject } from '../data/mock';
+import { useData } from '../data/source';
 import { useStore } from '../data/store';
 import type { ActionItem } from '../data/types';
+import { ActionButton } from './ActionButton';
 import { ActionRow } from './ActionRow';
 
 export type DecisionItem = Extract<ActionItem, { kind: 'question' | 'livrable' }>;
@@ -20,6 +21,7 @@ interface Props {
 /** Carte de décision (question ou livrable), partagée par « À faire » et la page d'un projet. */
 export function DecisionCard({ item, primary, disabled, showProject = true }: Props) {
   const { dispatch } = useStore();
+  const { live, findProject } = useData();
   const pri = primary ? 'btn pri' : 'btn';
   const where = showProject ? `${findProject(item.projectId)?.name ?? item.projectId} · ` : '';
 
@@ -35,20 +37,20 @@ export function DecisionCard({ item, primary, disabled, showProject = true }: Pr
           </>
         }
       >
-        <button type="button" className={pri} disabled={disabled} onClick={() => dispatch({ type: 'answer', itemId: item.id, answer: 'oui' })}>
+        <ActionButton live={live} className={pri} disabled={disabled} onClick={() => dispatch({ type: 'answer', itemId: item.id, answer: 'oui' })}>
           Répondre : oui
-        </button>
-        <button type="button" className="btn" disabled={disabled} onClick={() => dispatch({ type: 'answer', itemId: item.id, answer: 'non' })}>
+        </ActionButton>
+        <ActionButton live={live} disabled={disabled} onClick={() => dispatch({ type: 'answer', itemId: item.id, answer: 'non' })}>
           Non
-        </button>
+        </ActionButton>
       </ActionRow>
     );
   }
   return (
     <ActionRow meta={`${where}Livrable`} status="attention" statusLabel="À valider" title={item.title}>
-      <button type="button" className={pri} disabled={disabled} onClick={() => dispatch({ type: 'validate', itemId: item.id })}>
+      <ActionButton live={live} className={pri} disabled={disabled} onClick={() => dispatch({ type: 'validate', itemId: item.id })}>
         Valider
-      </button>
+      </ActionButton>
       {showProject && (
         <Link className="btn" to={`/projets/${item.projectId}`}>
           Ouvrir
