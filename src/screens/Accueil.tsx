@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ActionRow } from '../components/ActionRow';
+import { DecisionCard } from '../components/DecisionCard';
 import { Icon } from '../components/Icon';
 import { LaunchedList } from '../components/LaunchedRow';
 import { findProject, findSession } from '../data/mock';
@@ -21,7 +22,7 @@ export function Accueil() {
   const [params] = useSearchParams();
   const raw = params.get('etat');
   const demo = DEMOS.includes(raw as HomeDemo) ? (raw as HomeDemo) : null;
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const [sheet, setSheet] = useState<
     { kind: 'key' } | { kind: 'merge'; projectId: string; pr: string } | { kind: 'consigne'; session: string } | null
   >(null);
@@ -105,37 +106,8 @@ export function Accueil() {
           </ActionRow>
         );
       case 'question':
-        return (
-          <ActionRow
-            key={item.id}
-            meta={`${projectName(item.projectId)} · Question`}
-            status="attention"
-            title={item.title}
-            detail={
-              <>
-                PR <span className="code">{item.prRef}</span> {item.detail}
-              </>
-            }
-          >
-            <button type="button" className={pri} disabled={offline} onClick={() => dispatch({ type: 'answer', itemId: item.id, answer: 'oui' })}>
-              Répondre : oui
-            </button>
-            <button type="button" className="btn" disabled={offline} onClick={() => dispatch({ type: 'answer', itemId: item.id, answer: 'non' })}>
-              Non
-            </button>
-          </ActionRow>
-        );
       case 'livrable':
-        return (
-          <ActionRow key={item.id} meta={`${projectName(item.projectId)} · Livrable`} status="attention" statusLabel="À valider" title={item.title}>
-            <button type="button" className={pri} disabled={offline} onClick={() => dispatch({ type: 'validate', itemId: item.id })}>
-              Valider
-            </button>
-            <Link className="btn" to={`/projets/${item.projectId}`}>
-              Ouvrir
-            </Link>
-          </ActionRow>
-        );
+        return <DecisionCard key={item.id} item={item} primary={item.id === primaryId} disabled={offline} />;
     }
   };
 
