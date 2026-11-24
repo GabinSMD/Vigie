@@ -1,6 +1,6 @@
 # Brancher Vigie sur les vraies données — note de conception
 
-Statut : **D1 à D7 validées le 24/11/2026** ; D8 et D9 restent à trancher. Rien n'est branché.
+Statut : **décisions D1 à D9 validées le 24/11/2026**. Rien n'est branché.
 
 ## 1. Ce qu'il faut remplacer
 
@@ -101,7 +101,9 @@ Chaque étape fait l'objet d'une issue et d'une PR séparées.
 | D5 | Passer par le pilote pour les sessions | Oui (aucun jeton Claude hors du pilote) | Validé |
 | D6 | Fréquence de l'instantané | Toutes les 5 min, plus après chaque ordre traité | Validé |
 | D7 | Coûts | Masqués en V1 | Validé |
-| D8 | Projets suivis au départ | À lister (ex. ecole-saas, FFD-Connect, treizero, Vigie) | À trancher |
-| D9 | Nom de domaine | À choisir | À trancher |
+| D8 | Projets suivis au départ | `SIMOND-ANCE-BROS/ecole-saas`, `SIMOND-ANCE-BROS/FFD-Connect`, `GabinSMD/treizero`, `GabinSMD/StreamBox`, `GabinSMD/Vigie`, `GabinSMD/souhaits`, `GabinSMD/waterline`, `DentiSync/dentisync` | Validé |
+| D9 | Nom de domaine | Sous-domaine `vigie.` d'un domaine perso géré chez Cloudflare (domaine exact à préciser au déploiement) | Validé |
+
+Conséquence de D8 : les dépôts sont répartis sur trois comptes GitHub (`GabinSMD`, `SIMOND-ANCE-BROS`, `DentiSync`). La GitHub App « Vigie » devra être installée sur chacun, limitée aux dépôts listés ; le Worker garde un identifiant d'installation par compte.
 
 Avant de coder l'étape 1, il faut aussi **vérifier** les deux hypothèses marquées « à vérifier » (pas d'API publique des sessions ; pas de coût par session).
