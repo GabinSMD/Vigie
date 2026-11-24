@@ -150,8 +150,8 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
 }
 
 /** Une ligne reste dans « À faire par toi » tant que tu n'as pas tranché. */
-export function pendingItems(state: DemoState): ActionItem[] {
-  return actionItems.filter((item) => {
+export function pendingItems(state: DemoState, items: ActionItem[] = actionItems): ActionItem[] {
+  return items.filter((item) => {
     switch (item.kind) {
       case 'pr':
         return !state.merged.includes(item.prNumber);

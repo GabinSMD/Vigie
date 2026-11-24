@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { BackLink } from '../components/BackLink';
 import { Icon } from '../components/Icon';
 import { StatusPill } from '../components/StatusPill';
-import { findProject, findSession } from '../data/mock';
+import { ActionButton } from '../components/ActionButton';
+import { useData } from '../data/source';
 import { useStore } from '../data/store';
 import type { EventKind, SessionEvent } from '../data/types';
 import { ConsigneSheet } from '../sheets/ConsigneSheet';
@@ -20,6 +21,7 @@ const eventStyle: Record<EventKind, { dot: string; word: string }> = {
 
 export function Session() {
   const { projectId, sessionId } = useParams();
+  const { live, findProject, findSession } = useData();
   const project = findProject(projectId);
   const session = findSession(sessionId);
   const { state, dispatch } = useStore();
@@ -67,10 +69,10 @@ export function Session() {
           <Timeline events={events} />
         </div>
         <div className="footer-actions">
-          <button type="button" className="btn pri big full" onClick={() => dispatch({ type: 'notify', message: 'Reprise demandée.' })}>
+          <ActionButton live={live} className="btn pri big full" onClick={() => dispatch({ type: 'notify', message: 'Reprise demandée.' })}>
             <Icon name="retry" />
             Reprendre la session
-          </button>
+          </ActionButton>
         </div>
       </>
     );
@@ -119,9 +121,9 @@ export function Session() {
         <Timeline events={events} />
       </div>
       <div className="footer-actions">
-        <button type="button" className="btn pri big full" onClick={() => setConsigne(true)}>
+        <ActionButton live={live} className="btn pri big full" onClick={() => setConsigne(true)}>
           Envoyer une consigne
-        </button>
+        </ActionButton>
         {session.linkedPr && (
           <Link className="btn full" to={`/projets/${project.id}/pr/${session.linkedPr.slice(1)}`}>
             Ouvrir la PR <span className="code">{session.linkedPr}</span>

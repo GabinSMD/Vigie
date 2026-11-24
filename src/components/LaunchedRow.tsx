@@ -1,4 +1,4 @@
-import { findProject } from '../data/mock';
+import { useData } from '../data/source';
 import type { Launched } from '../data/store';
 import { ActionRow } from './ActionRow';
 
@@ -7,6 +7,7 @@ import { ActionRow } from './ActionRow';
  * Ce n'est pas une décision à prendre : pastille neutre, aucun bouton, pas comptée dans « À faire ».
  */
 export function LaunchedRow({ session, showProject = true }: { session: Launched; showProject?: boolean }) {
+  const { findProject } = useData();
   const project = findProject(session.projectId)?.name ?? session.projectId;
   return (
     <ActionRow

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { HashRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { TabBar } from './components/TabBar';
 import { Toast } from './components/Toast';
+import { DataProvider, useData } from './data/source';
 import { StoreProvider, pendingItems, useStore, type DemoState } from './data/store';
 import { Accueil } from './screens/Accueil';
 import { Equipe } from './screens/Equipe';
@@ -33,6 +34,7 @@ export function AppRoutes() {
 /** Coquille : lien d'évitement, contenu, barre d'onglets. Le focus va au contenu à chaque navigation. */
 export function Shell() {
   const { state } = useStore();
+  const { actionItems } = useData();
   const { pathname } = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const first = useRef(true);
@@ -54,7 +56,7 @@ export function Shell() {
       <main id="contenu" ref={mainRef} className="main" tabIndex={-1}>
         <AppRoutes />
       </main>
-      <TabBar todoCount={pendingItems(state).length} />
+      <TabBar todoCount={pendingItems(state, actionItems).length} />
       <Toast />
     </div>
   );
@@ -62,10 +64,12 @@ export function Shell() {
 
 export function App({ initialState }: { initialState?: DemoState }) {
   return (
-    <StoreProvider initial={initialState}>
-      <HashRouter>
-        <Shell />
-      </HashRouter>
-    </StoreProvider>
+    <DataProvider>
+      <StoreProvider initial={initialState}>
+        <HashRouter>
+          <Shell />
+        </HashRouter>
+      </StoreProvider>
+    </DataProvider>
   );
 }

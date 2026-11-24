@@ -1,7 +1,8 @@
 import { useId, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Icon } from '../components/Icon';
-import { findProject, projects } from '../data/mock';
+import { ActionButton } from '../components/ActionButton';
+import { useData } from '../data/source';
 import { ROLES, remainingSessions, useStore, type Role } from '../data/store';
 import { plural } from '../lib/format';
 
@@ -11,13 +12,31 @@ const DEFAULT_PROJECT = 'ecole-saas';
 
 /** Lancer une session : depuis une issue en file, ou avec une consigne libre. */
 export function Lancer() {
+  const { projects } = useData();
+  if (projects.length === 0) {
+    return (
+      <>
+        <header className="head">
+          <h1 className="h1">Lancer du travail</h1>
+        </header>
+        <p className="det" style={{ padding: '0 16px' }}>
+          Aucun projet à afficher pour l'instant.
+        </p>
+      </>
+    );
+  }
+  return <LancerForm />;
+}
+
+function LancerForm() {
+  const { live, projects, findProject } = useData();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { state, dispatch } = useStore();
   const textId = useId();
 
   /* ?projet=ecole-saas&issue=450 : arrivée depuis l'onglet Issues d'un projet. */
-  const initialProject = findProject(params.get('projet') ?? undefined) ?? findProject(DEFAULT_PROJECT)!;
+  const initialProject = findProject(params.get('projet') ?? undefined) ?? findProject(DEFAULT_PROJECT) ?? projects[0]!;
   const askedIssue = params.get('issue');
   const initialIssue =
     initialProject.issues.find((i) => i.number === `#${askedIssue}`)?.number ?? initialProject.issues[0]?.number ?? null;
@@ -139,7 +158,15 @@ export function Lancer() {
           </div>
         </fieldset>
 
-        {remaining > 0 ? (
+        {live ? (
+          <div className="guard att">
+            <Icon name="warning" />
+            <div>
+              <b>Lancement de sessions : bientôt</b>
+              <span className="det strong-ink">Cette version lit tes projets sans rien envoyer. Le lancement viendra à l'étape 3.</span>
+            </div>
+          </div>
+        ) : remaining > 0 ? (
           <div className="guard att">
             <Icon name="warning" />
             <div>
@@ -165,9 +192,9 @@ export function Lancer() {
       </div>
 
       <div className="footer-actions">
-        <button type="button" className="btn pri big full" disabled={remaining === 0} onClick={launch}>
+        <ActionButton live={live} className="btn pri big full" disabled={remaining === 0} onClick={launch}>
           Lancer la session
-        </button>
+        </ActionButton>
       </div>
     </>
   );
