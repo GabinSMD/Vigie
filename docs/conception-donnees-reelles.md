@@ -1,0 +1,107 @@
+# Brancher Vigie sur les vraies données — note de conception
+
+Statut : **proposition, rien n'est branché**. Chaque décision ci-dessous attend ton accord (section « Décisions à prendre »).
+
+## 1. Ce qu'il faut remplacer
+
+Aujourd'hui tout vient de `src/data/mock.ts`, et chaque décision ne change qu'un état local (`src/data/store.tsx`).
+
+| Ce que l'app affiche | Source réelle |
+| --- | --- |
+| Projets (dépôts suivis) | Liste fixe que tu tiens (fichier de config) |
+| Sessions, état, résumé, événements, « attend ton avis » | Sessions Claude Code (cloud) |
+| PR, CI, brouillon, garde-fous | GitHub |
+| Issues en file | GitHub (issues ouvertes, dont `[session-suivante]`) |
+| Questions, livrables à valider | Sessions Claude Code (ce qu'elles demandent) |
+| Coût du jour, par session et par projet | **Inconnu** : voir § 6 |
+| Plafonds, fusion auto, alertes (Réglages) | Stockage propre à Vigie |
+
+| Ce que l'app fait | Effet réel |
+| --- | --- |
+| Fusionner une PR | Fusion GitHub |
+| Envoyer une consigne / répondre oui-non | Message envoyé à une session |
+| Valider un livrable | Message à la session, ou fermeture d'issue |
+| Lancer une session | Création d'une session Claude Code |
+| Reprendre une session déconnectée | Relance de la session |
+| Fusion automatique, plafonds | Règles que le pilote applique |
+
+## 2. Contrainte principale : l'accès aux sessions
+
+À ma connaissance (**à vérifier** avant de coder), il n'y a pas d'API publique documentée pour lister les sessions Claude Code cloud d'un compte avec un simple jeton. Ce qui marche aujourd'hui, c'est ce qu'utilise le pilote : les outils `claude-code-remote` (`list_sessions`, `list_events`, `get_session`, `send_message`, `create_session`), disponibles **depuis une session Claude Code**.
+
+Conséquence : Vigie ne doit pas parler directement aux sessions. Le **pilote** (qui tourne déjà et a ces droits) sert d'intermédiaire.
+
+## 3. Architecture proposée
+
+```
+           lit (toutes les N min)                     écrit l'instantané
+ Pilote ─────────────────────────► sessions Claude ─┐
+   │  ▲                                              ├──► Stockage Vigie (instantané + file d'ordres)
+   │  │ prend les ordres en file                     │            ▲
+   │  └──────────────────────────────────────────────┘            │ lit / dépose un ordre
+   │ exécute : consigne, lancement, reprise                         │
+   ▼                                                         App Vigie (navigateur)
+ GitHub ◄──── lecture directe (PR, CI, issues) ──── Worker Vigie ──┘
+```
+
+1. **Instantané des sessions** : à chaque tour, le pilote écrit un JSON par projet (sessions, état, résumé, derniers événements, ce qu'elles attendent) dans le stockage de Vigie. Vigie le lit et affiche « Données de 14 h 02 » (l'état hors-ligne existe déjà).
+2. **GitHub en direct** : un petit serveur (Worker) lit PR, CI et issues avec un accès en lecture seule limité aux dépôts suivis.
+3. **Ordres en file** : un bouton de Vigie (consigne, lancement…) dépose un ordre signé dans une file ; le pilote le prend à son prochain tour, l'exécute, et note le résultat. L'app montre « Envoyé, en attente du pilote » puis « Fait ».
+4. **Fusion** : seule action qui touche GitHub en écriture. Voir décision D4.
+
+Pourquoi ce découpage : aucun jeton Claude ne quitte le pilote ; Vigie ne détient qu'un accès GitHub en lecture (plus, éventuellement, la fusion) ; si Vigie est compromise, au pire on lit tes PR ou on dépose un ordre que le pilote peut refuser.
+
+## 4. Hébergement — recommandation : Cloudflare
+
+| | Cloudflare (Pages + Worker + KV/D1) | Homelab |
+| --- | --- | --- |
+| Accessible depuis le téléphone, partout | Oui | Il faut l'exposer (tunnel) |
+| Authentification | Cloudflare Access, sans code à écrire | À monter |
+| Disponibilité | Indépendante de la maison | Dépend du courant et de la box |
+| Coût | Offre gratuite suffisante pour un seul utilisateur | Déjà payé |
+| Le pilote peut y écrire | Oui (API) | Oui, si exposé |
+
+Recommandation : **Cloudflare**, Pages pour l'app, un Worker pour l'API, **KV** pour l'instantané et **D1** pour la file d'ordres et les réglages.
+
+## 5. Sécurité
+
+- **Connexion à l'app** : Cloudflare Access devant tout le domaine, une seule adresse autorisée (la tienne), code par e-mail ou connexion GitHub. Pas de mot de passe géré par Vigie.
+- **Accès GitHub** : une GitHub App dédiée « Vigie », installée sur les seuls dépôts suivis, permissions *lecture* sur contents, pull requests, issues, checks. La clé privée vit dans les secrets du Worker, jamais dans le dépôt ni dans l'app.
+- **Écriture vers le stockage par le pilote** : un jeton Cloudflare limité à ce KV/D1, rangé dans les secrets de l'environnement du pilote.
+- **Ordres** : chaque ordre a un type parmi une liste fermée, un identifiant unique, une date d'expiration (ex. 15 min) ; le pilote ignore tout ordre expiré, inconnu ou en double. Une consigne libre est transmise comme texte, jamais exécutée.
+- **Aucun secret à l'écran** : la règle actuelle (« jamais de clé ni de jeton affiché ») reste ; le blocage « clé API » dit toujours où poser la clé, pas la clé.
+- **Journal** : chaque ordre et chaque fusion sont gardés dans D1 (qui, quoi, quand, résultat).
+
+## 6. Coûts : point ouvert
+
+Les outils `claude-code-remote` ne donnent pas de coût par session (à vérifier). Trois pistes, de la plus simple à la plus juste :
+1. masquer l'onglet Coût et les jauges tant qu'aucune source fiable n'existe ;
+2. une estimation (durée ou tours de session × forfait) clairement marquée « estimé » ;
+3. les chiffres de la console d'utilisation, s'il existe une API accessible à ton compte.
+
+Recommandation : **1** pour la première version. Les plafonds de **sessions par jour** restent, eux, appliqués par le pilote.
+
+## 7. Découpage en étapes
+
+1. **Lecture seule** : config des projets, Worker + GitHub App (PR, CI, issues), instantané des sessions écrit par le pilote, Cloudflare Access. Les boutons d'action restent désactivés avec « Bientôt ».
+2. **Ordres sans risque** : consigne, réponse oui/non, validation de livrable, reprise : via la file.
+3. **Lancement de sessions** : via la file, plafond du jour vérifié par le pilote *et* par le Worker.
+4. **Fusion** depuis Vigie, puis fusion automatique par projet (garde-fous : pas brouillon, CI verte, branche principale).
+
+Chaque étape fait l'objet d'une issue et d'une PR séparées.
+
+## 8. Décisions à prendre
+
+| # | Décision | Ma recommandation |
+| --- | --- | --- |
+| D1 | Hébergement | Cloudflare (Pages + Worker + KV/D1) |
+| D2 | Connexion à l'app | Cloudflare Access, ta seule adresse |
+| D3 | Accès GitHub | GitHub App « Vigie », lecture seule, dépôts suivis seulement |
+| D4 | Qui fusionne | Étape 4 seulement ; d'ici là, le bouton ouvre la PR sur GitHub |
+| D5 | Passer par le pilote pour les sessions | Oui (aucun jeton Claude hors du pilote) |
+| D6 | Fréquence de l'instantané | Toutes les 5 min, plus après chaque ordre traité |
+| D7 | Coûts | Masqués en V1 |
+| D8 | Projets suivis au départ | À lister (ex. ecole-saas, FFD-Connect, treizero, Vigie) |
+| D9 | Nom de domaine | À choisir |
+
+Avant de coder l'étape 1, il faut aussi **vérifier** les deux hypothèses marquées « à vérifier » (pas d'API publique des sessions ; pas de coût par session).
