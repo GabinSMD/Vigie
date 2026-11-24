@@ -1,6 +1,6 @@
 import { ActionSheet } from '../components/ActionSheet';
 import { Icon } from '../components/Icon';
-import { findProject } from '../data/mock';
+import { useData } from '../data/source';
 import { useStore } from '../data/store';
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 /** Donner plus d'autonomie aux agents passe toujours par une confirmation ; la retirer, non. */
 export function AutoMergeSheet({ projectId, onClose }: Props) {
   const { dispatch } = useStore();
+  const { findProject } = useData();
   const project = findProject(projectId ?? undefined);
 
   return (

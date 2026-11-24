@@ -3,7 +3,8 @@ import { CostGauge } from '../components/CostGauge';
 import { Icon } from '../components/Icon';
 import { Stepper } from '../components/Stepper';
 import { Switch } from '../components/Switch';
-import { projects, totalCostToday } from '../data/mock';
+import { ActionButton } from '../components/ActionButton';
+import { useData } from '../data/source';
 import { LIMITS, useStore, type SettingsPatch } from '../data/store';
 import { formatCap, formatCost } from '../lib/format';
 import { AutoMergeSheet } from '../sheets/AutoMergeSheet';
@@ -12,6 +13,41 @@ const QUICK_COST_CAPS = [5, 10, 20, 50];
 
 /** Autonomie des agents, budgets et alertes. Aucun bouton plein : chaque réglage s'applique tout de suite. */
 export function Reglages() {
+  const { live } = useData();
+  if (live) return <ReglagesLecture />;
+  return <ReglagesDemo />;
+}
+
+/** Données réelles (étape 1) : aucun réglage n'est appliqué, les coûts sont masqués (D7). */
+function ReglagesLecture() {
+  return (
+    <>
+      <header className="head">
+        <div>
+          <h1 className="h1">Réglages</h1>
+          <p className="det" style={{ marginTop: 4 }}>
+            Lecture seule
+          </p>
+        </div>
+      </header>
+      <div className="body">
+        <section className="card" aria-label="Réglages à venir">
+          <span className="k">Bientôt</span>
+          <p style={{ margin: 0 }}>
+            Les plafonds de sessions, la fusion automatique et les alertes seront appliqués par le pilote (étapes 2 à 4).
+            Les coûts ne sont pas affichés dans cette version.
+          </p>
+          <ActionButton live className="btn full">
+            Modifier les réglages
+          </ActionButton>
+        </section>
+      </div>
+    </>
+  );
+}
+
+function ReglagesDemo() {
+  const { projects, totalCostToday } = useData();
   const { state, dispatch } = useStore();
   const [confirming, setConfirming] = useState<string | null>(null);
   const { settings } = state;

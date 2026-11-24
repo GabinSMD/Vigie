@@ -3,13 +3,14 @@ import { Link, useParams } from 'react-router-dom';
 import { BackLink } from '../components/BackLink';
 import { Icon } from '../components/Icon';
 import { StatusPill } from '../components/StatusPill';
-import { findProject, findPullRequest, findSession } from '../data/mock';
+import { useData } from '../data/source';
 import { useStore } from '../data/store';
 import { MergeSheet } from '../sheets/MergeSheet';
 import { NotFound } from './NotFound';
 
 export function PullRequest() {
   const { projectId, prNumber } = useParams();
+  const { live, findProject, findPullRequest, findSession } = useData();
   const project = findProject(projectId);
   const pr = findPullRequest(projectId, prNumber);
   const { state } = useStore();
@@ -94,9 +95,15 @@ export function PullRequest() {
       </div>
       {!merged && !pr.draft && (
         <div className="footer-actions">
-          <button type="button" className="btn pri big full" onClick={() => setMerging(true)}>
-            Fusionner {pr.number}
-          </button>
+          {live ? (
+            <a className="btn pri big full" href={pr.url} target="_blank" rel="noreferrer noopener">
+              Ouvrir {pr.number} sur GitHub<span className="sr-only"> (nouvel onglet)</span>
+            </a>
+          ) : (
+            <button type="button" className="btn pri big full" onClick={() => setMerging(true)}>
+              Fusionner {pr.number}
+            </button>
+          )}
         </div>
       )}
       <MergeSheet projectId={project.id} prNumber={merging ? pr.number : null} onClose={() => setMerging(false)} />

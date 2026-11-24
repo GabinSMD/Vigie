@@ -1,6 +1,6 @@
 import { ActionSheet } from '../components/ActionSheet';
 import { Icon } from '../components/Icon';
-import { findPullRequest, findProject } from '../data/mock';
+import { useData } from '../data/source';
 import { useStore } from '../data/store';
 
 interface Props {
@@ -12,6 +12,7 @@ interface Props {
 /** Fusion = action irréversible : elle passe toujours par cette confirmation. */
 export function MergeSheet({ projectId, prNumber, onClose }: Props) {
   const { dispatch } = useStore();
+  const { findPullRequest, findProject } = useData();
   const pr = prNumber ? findPullRequest(projectId, prNumber.replace('#', '')) : undefined;
   const project = findProject(projectId);
 

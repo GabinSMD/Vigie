@@ -40,6 +40,8 @@ export interface PullRequest {
   checks: { label: string; status: Status; statusLabel: string }[];
   guards: string[];
   draft: boolean;
+  /** Adresse GitHub de la PR (données réelles). */
+  url?: string;
 }
 
 export interface ClosedPullRequest {
@@ -52,6 +54,7 @@ export interface ClosedPullRequest {
 export interface Issue {
   number: string;
   title: string;
+  url?: string;
 }
 
 export interface CostLine {
@@ -73,6 +76,8 @@ export interface Project {
   closedPrs: ClosedPullRequest[];
   issues: Issue[];
   costs: CostLine[];
+  /** Adresse GitHub du dépôt (données réelles). */
+  url?: string;
 }
 
 /** Une ligne de la file « À faire par toi ». */
