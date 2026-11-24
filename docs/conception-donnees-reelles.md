@@ -1,6 +1,6 @@
 # Brancher Vigie sur les vraies données — note de conception
 
-Statut : **proposition, rien n'est branché**. Chaque décision ci-dessous attend ton accord (section « Décisions à prendre »).
+Statut : **D1 à D7 validées le 24/11/2026** ; D8 et D9 restent à trancher. Rien n'est branché.
 
 ## 1. Ce qu'il faut remplacer
 
@@ -90,18 +90,18 @@ Recommandation : **1** pour la première version. Les plafonds de **sessions par
 
 Chaque étape fait l'objet d'une issue et d'une PR séparées.
 
-## 8. Décisions à prendre
+## 8. Décisions
 
-| # | Décision | Ma recommandation |
-| --- | --- | --- |
-| D1 | Hébergement | Cloudflare (Pages + Worker + KV/D1) |
-| D2 | Connexion à l'app | Cloudflare Access, ta seule adresse |
-| D3 | Accès GitHub | GitHub App « Vigie », lecture seule, dépôts suivis seulement |
-| D4 | Qui fusionne | Étape 4 seulement ; d'ici là, le bouton ouvre la PR sur GitHub |
-| D5 | Passer par le pilote pour les sessions | Oui (aucun jeton Claude hors du pilote) |
-| D6 | Fréquence de l'instantané | Toutes les 5 min, plus après chaque ordre traité |
-| D7 | Coûts | Masqués en V1 |
-| D8 | Projets suivis au départ | À lister (ex. ecole-saas, FFD-Connect, treizero, Vigie) |
-| D9 | Nom de domaine | À choisir |
+| # | Décision | Choix | Statut |
+| --- | --- | --- | --- |
+| D1 | Hébergement | Cloudflare (Pages + Worker + KV/D1) | Validé |
+| D2 | Connexion à l'app | Cloudflare Access, ta seule adresse | Validé |
+| D3 | Accès GitHub | GitHub App « Vigie », lecture seule, dépôts suivis seulement | Validé |
+| D4 | Qui fusionne | Étape 4 seulement ; d'ici là, le bouton ouvre la PR sur GitHub | Validé |
+| D5 | Passer par le pilote pour les sessions | Oui (aucun jeton Claude hors du pilote) | Validé |
+| D6 | Fréquence de l'instantané | Toutes les 5 min, plus après chaque ordre traité | Validé |
+| D7 | Coûts | Masqués en V1 | Validé |
+| D8 | Projets suivis au départ | À lister (ex. ecole-saas, FFD-Connect, treizero, Vigie) | À trancher |
+| D9 | Nom de domaine | À choisir | À trancher |
 
 Avant de coder l'étape 1, il faut aussi **vérifier** les deux hypothèses marquées « à vérifier » (pas d'API publique des sessions ; pas de coût par session).
