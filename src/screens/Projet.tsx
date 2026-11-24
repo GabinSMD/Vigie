@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ActionRow } from '../components/ActionRow';
 import { BackLink } from '../components/BackLink';
+import { DecisionCard, isDecision } from '../components/DecisionCard';
 import { CostGauge } from '../components/CostGauge';
 import { LaunchedList } from '../components/LaunchedRow';
 import { StatusPill } from '../components/StatusPill';
 import { ActionButton } from '../components/ActionButton';
 import { useData } from '../data/source';
-import { useStore } from '../data/store';
+import { pendingItems, useStore } from '../data/store';
 import type { Project } from '../data/types';
 import { formatCost, gauge } from '../lib/format';
 import { MergeSheet } from '../sheets/MergeSheet';
@@ -68,14 +69,17 @@ export function Projet() {
 
 function SessionsTab({ project }: { project: Project }) {
   const { state } = useStore();
-  const { sessions } = useData();
+  const { sessions, actionItems } = useData();
   const list = sessions.filter((s) => project.sessionIds.includes(s.id));
   const launched = state.launched.filter((l) => l.projectId === project.id);
-  if (list.length === 0 && launched.length === 0) return <p className="det">Aucune session pour ce projet aujourd'hui.</p>;
-  const firstWaiting = list.find((s) => s.status === 'attention' && !state.consignes[s.id]?.length);
+  const decisions = pendingItems(state, actionItems).filter((i) => i.projectId === project.id && isDecision(i));
+  if (list.length === 0 && launched.length === 0 && decisions.length === 0)
+    return <p className="det">Aucune session pour ce projet aujourd'hui.</p>;
+  const firstWaiting = decisions.length > 0 ? undefined : list.find((s) => s.status === 'attention' && !state.consignes[s.id]?.length);
 
   return (
     <>
+      {decisions.map((item, index) => isDecision(item) && <DecisionCard key={item.id} item={item} primary={index === 0} showProject={false} />)}
       <LaunchedList sessions={launched} showProject={false} />
       {list.map((s) => {
         const sent = Boolean(state.consignes[s.id]?.length);
