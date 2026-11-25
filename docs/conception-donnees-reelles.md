@@ -34,7 +34,7 @@ Conséquence : Vigie ne doit pas parler directement aux sessions. Le **pilote** 
 ## 3. Architecture proposée
 
 ```
-           lit (toutes les N min)                     écrit l'instantané
+           lit (à chaque passage)                     écrit l'instantané
  Pilote ─────────────────────────► sessions Claude ─┐
    │  ▲                                              ├──► Stockage Vigie (instantané + file d'ordres)
    │  │ prend les ordres en file                     │            ▲
@@ -46,7 +46,7 @@ Conséquence : Vigie ne doit pas parler directement aux sessions. Le **pilote** 
 
 1. **Instantané des sessions** : à chaque tour, le pilote écrit un JSON par projet (sessions, état, résumé, derniers événements, ce qu'elles attendent) dans le stockage de Vigie. Vigie le lit et affiche « Données de 14 h 02 » (l'état hors-ligne existe déjà).
 2. **GitHub en direct** : un petit serveur (Worker) lit PR, CI et issues avec un accès en lecture seule limité aux dépôts suivis.
-3. **Ordres en file** : un bouton de Vigie (consigne, lancement…) dépose un ordre signé dans une file ; le pilote le prend à son prochain tour, l'exécute, et note le résultat. L'app montre « Envoyé, en attente du pilote » puis « Fait ».
+3. **Ordres en file** : un bouton de Vigie (consigne, lancement…) dépose un ordre signé dans une file ; le pilote le prend à son prochain passage (au plus une heure plus tard en journée), l'exécute, et note le résultat. L'app montre « Envoyé, en attente du pilote » puis « Fait ».
 4. **Fusion** : seule action qui touche GitHub en écriture. Voir décision D4.
 
 Pourquoi ce découpage : aucun jeton Claude ne quitte le pilote ; Vigie ne détient qu'un accès GitHub en lecture (plus, éventuellement, la fusion) ; si Vigie est compromise, au pire on lit tes PR ou on dépose un ordre que le pilote peut refuser.
@@ -68,7 +68,7 @@ Recommandation : **Cloudflare**, Pages pour l'app, un Worker pour l'API, **KV** 
 - **Connexion à l'app** : Cloudflare Access devant tout le domaine, une seule adresse autorisée (la tienne), code par e-mail ou connexion GitHub. Pas de mot de passe géré par Vigie.
 - **Accès GitHub** : une GitHub App dédiée « Vigie », installée sur les seuls dépôts suivis, permissions *lecture* sur contents, pull requests, issues, checks. La clé privée vit dans les secrets du Worker, jamais dans le dépôt ni dans l'app.
 - **Écriture vers le stockage par le pilote** : un jeton Cloudflare limité à ce KV/D1, rangé dans les secrets de l'environnement du pilote.
-- **Ordres** : chaque ordre a un type parmi une liste fermée, un identifiant unique, une date d'expiration (ex. 15 min) ; le pilote ignore tout ordre expiré, inconnu ou en double. Une consigne libre est transmise comme texte, jamais exécutée.
+- **Ordres** : chaque ordre a un type parmi une liste fermée, un identifiant unique, une date d'expiration plus longue que l'écart entre deux passages du pilote (ex. 3 h, et les ordres déposés la nuit attendent le passage de 8 h) ; le pilote ignore tout ordre expiré, inconnu ou en double. Une consigne libre est transmise comme texte, jamais exécutée.
 - **Aucun secret à l'écran** : la règle actuelle (« jamais de clé ni de jeton affiché ») reste ; le blocage « clé API » dit toujours où poser la clé, pas la clé.
 - **Journal** : chaque ordre et chaque fusion sont gardés dans D1 (qui, quoi, quand, résultat).
 
@@ -99,7 +99,7 @@ Chaque étape fait l'objet d'une issue et d'une PR séparées.
 | D3 | Accès GitHub | GitHub App « Vigie », lecture seule, dépôts suivis seulement | Validé |
 | D4 | Qui fusionne | Étape 4 seulement ; d'ici là, le bouton ouvre la PR sur GitHub | Validé |
 | D5 | Passer par le pilote pour les sessions | Oui (aucun jeton Claude hors du pilote) | Validé |
-| D6 | Fréquence de l'instantané | Toutes les 5 min, plus après chaque ordre traité | Validé |
+| D6 | Fréquence de l'instantané | À chaque passage du pilote (toutes les heures, de 8 h à 21 h, heure de Paris). Révisé le 25/11/2026 : une tâche programmée ne peut pas tourner plus d'une fois par heure | Validé |
 | D7 | Coûts | Masqués en V1 | Validé |
 | D8 | Projets suivis au départ | `SIMOND-ANCE-BROS/ecole-saas`, `SIMOND-ANCE-BROS/FFD-Connect`, `GabinSMD/treizero`, `GabinSMD/StreamBox`, `GabinSMD/Vigie`, `GabinSMD/souhaits`, `GabinSMD/waterline`, `DentiSync/dentisync` | Validé |
 | D9 | Nom de domaine | Sous-domaine `vigie.` d'un domaine perso géré chez Cloudflare (domaine exact à préciser au déploiement) | Validé |

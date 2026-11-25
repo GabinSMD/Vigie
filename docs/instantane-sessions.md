@@ -1,6 +1,6 @@
 # Instantané des sessions
 
-Ce que le **pilote** écrit dans KV et que le Worker relit (`GET /api/sessions`). Un seul document JSON, remplacé en entier à chaque tour (toutes les 5 min, plus après chaque ordre traité : D6).
+Ce que le **pilote** écrit dans KV et que le Worker relit (`GET /api/sessions`). Un seul document JSON, remplacé en entier à chaque passage du pilote : toutes les heures, de 8 h à 21 h, heure de Paris (D6). L'instantané peut donc avoir jusqu'à une heure de retard en journée, et davantage la nuit : l'app affiche toujours son heure.
 
 - Clé KV : `snapshot`, dans l'espace `VIGIE_SNAPSHOT`.
 - Type TypeScript de référence : [`src/data/snapshot.ts`](../src/data/snapshot.ts) (`SessionSnapshot`).
