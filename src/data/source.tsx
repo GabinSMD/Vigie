@@ -25,7 +25,10 @@ async function getJson<T>(base: string, path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** Lit l'API si `apiUrl` est défini ; sinon ne fait rien et les données fictives restent. */
+/**
+ * Lit l'API si `apiUrl` est défini ; sinon ne fait rien et les données fictives restent.
+ * `apiUrl` peut être une adresse complète ou `/` (même origine : le Worker sert l'app et l'API).
+ */
 export function DataProvider({ children, apiUrl = import.meta.env.VITE_API_URL as string | undefined }: { children: ReactNode; apiUrl?: string }) {
   const [live, setLive] = useState<DataSet>({ ...emptyLive, loading: true });
 

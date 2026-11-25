@@ -7,3 +7,5 @@ coverage/
 .DS_Store
 .wrangler/
 .dev.vars
+
+.vigie-setup/

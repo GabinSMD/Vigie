@@ -33,11 +33,11 @@ npm run build      # vérification des types + build dans dist/
 
 ## Données réelles (étape 1, lecture seule)
 
-Sans configuration, l'app utilise les données fictives. Avec `VITE_API_URL=https://vigie.<domaine>`, elle lit le Worker (`worker/`) : PR, CI et issues via une GitHub App en lecture seule, sessions via l'instantané que le pilote écrit dans KV. Les actions restent désactivées (« Bientôt »), « Fusionner » ouvre la PR sur GitHub, les coûts sont masqués.
+Sans configuration, l'app utilise les données fictives. Avec `VITE_API_URL` (`/` en production : le Worker sert l'app et l'API sur le même nom d'hôte), elle lit le Worker (`worker/`) : PR, CI et issues via une GitHub App en lecture seule, sessions via l'instantané que le pilote écrit dans KV. Les actions restent désactivées (« Bientôt »), « Fusionner » ouvre la PR sur GitHub, les coûts sont masqués.
 
 - Conception : [`docs/conception-donnees-reelles.md`](docs/conception-donnees-reelles.md)
 - Format de l'instantané : [`docs/instantane-sessions.md`](docs/instantane-sessions.md)
-- Mise en route (GitHub App, KV, Access, déploiement) : [`docs/mise-en-route.md`](docs/mise-en-route.md)
+- Mise en route (GitHub App, KV, Access, déploiement) : `npm run mise-en-route` depuis ton Mac, guide dans [`docs/mise-en-route.md`](docs/mise-en-route.md)
 - Projets suivis : [`config/projets.json`](config/projets.json) · tests du Worker : `cd worker && npm test`
 
 ## Règles de conception tenues dans le code

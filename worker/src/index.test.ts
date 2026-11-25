@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { handle, type Deps, type Env } from './index';
+import { handle, route, type Deps, type Env } from './index';
 import { createAppJwt } from './github';
 
 let pem = '';
@@ -157,6 +157,26 @@ describe('routage', () => {
       expect(response.status).toBe(405);
     }
     expect((await handle(get('/api/autre'), makeEnv(), deps)).status).toBe(404);
+  });
+});
+
+describe('static assets', () => {
+  it('sert l\'app depuis ASSETS et garde /api/* pour l\'API', async () => {
+    const seen: string[] = [];
+    const ASSETS = { fetch: async (req: Request) => (seen.push(new URL(req.url).pathname), new Response('<html>', { status: 200 })) } as unknown as Fetcher;
+    const env = { ...makeEnv(), ASSETS };
+    const page = await route(new Request('https://vigie.example.org/'), env);
+    expect(await page.text()).toBe('<html>');
+    const asset = await route(new Request('https://vigie.example.org/assets/index.js'), env);
+    expect(asset.status).toBe(200);
+    const api = await route(new Request('https://vigie.example.org/api/sessions'), env);
+    expect(await api.json()).toEqual({ snapshotAt: null, snapshot: null });
+    expect((await route(new Request('https://vigie.example.org/api/autre'), env)).status).toBe(404);
+    expect(seen).toEqual(['/', '/assets/index.js']);
+  });
+
+  it('répond 404 hors /api/* quand ASSETS est absent', async () => {
+    expect((await route(new Request('https://vigie.example.org/'), makeEnv())).status).toBe(404);
   });
 });
 
