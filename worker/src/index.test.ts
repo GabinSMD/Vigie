@@ -109,11 +109,12 @@ describe('GET /api/projets', () => {
     const writes = gh.calls.filter((c) => c.method !== 'GET' && !c.url.includes('/access_tokens'));
     expect(writes).toEqual([]);
     const tokenCalls = gh.calls.filter((c) => c.url.includes('/access_tokens'));
-    expect(tokenCalls.map((c) => c.url)).toEqual([
+    // Les projets sont lus en parallèle : l'ordre des demandes de jeton n'est pas garanti.
+    expect(tokenCalls.map((c) => c.url).sort()).toEqual([
       'https://api.github.com/app/installations/1/access_tokens',
       'https://api.github.com/app/installations/2/access_tokens',
     ]);
-    expect(tokenCalls[0]!.auth).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+    for (const call of tokenCalls) expect(call.auth).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
   });
 
   it('répond 502 sans détail si l\'App est mal configurée', async () => {
