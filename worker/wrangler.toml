@@ -1,20 +1,34 @@
-# Worker Vigie : API de lecture seule (étape 1).
+# Worker Vigie : sert l'app (static assets de dist/) et l'API de lecture seule (/api/*), sur un seul nom d'hôte.
 # Les valeurs ci-dessous sont FACTICES : rien n'est déployé tant que tu ne les remplaces pas.
+# Le plus simple : `npm run mise-en-route` à la racine du dépôt les remplace pour toi.
 # Guide pas à pas : docs/mise-en-route.md
 
 name = "vigie-api"
 main = "src/index.ts"
 compatibility_date = "2025-06-01"
 
-# À FAIRE PAR GABIN : remplace "example.org" par ton domaine géré chez Cloudflare (décision D9).
-# L'app (Pages) et ce Worker partagent le même nom d'hôte : pas de CORS, et Cloudflare Access protège les deux.
+# Pas d'adresse *.workers.dev ni d'URL d'aperçu : Vigie n'est joignable que derrière Cloudflare Access.
+workers_dev = false
+preview_urls = false
+
+# Domaine personnalisé : tout le nom d'hôte (l'app et /api/*). Cloudflare Access protège l'ensemble.
+# À REMPLACER : « vigie.example.org » par ton sous-domaine, « example.org » par ta zone (décision D9).
 routes = [
-  { pattern = "vigie.example.org/api/*", zone_name = "example.org" }
+  { pattern = "vigie.example.org", zone_name = "example.org", custom_domain = true }
 ]
+
+# Garde routes, workers_dev, etc. AU-DESSUS de [assets] : en TOML, une clé placée dessous irait dans [assets].
+# L'app est construite dans ../dist (`npm run build` à la racine, avec VITE_API_URL=/).
+# run_worker_first : chaque requête passe par le Worker, qui garde /api/* et renvoie le reste à ASSETS.
+[assets]
+directory = "../dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
 
 [[kv_namespaces]]
 binding = "VIGIE_SNAPSHOT"
-# À FAIRE PAR GABIN : colle l'identifiant rendu par `npx wrangler kv namespace create VIGIE_SNAPSHOT`.
+# À REMPLACER : l'identifiant rendu par `npx wrangler kv namespace create VIGIE_SNAPSHOT`.
 id = "00000000000000000000000000000000"
 
 # SECRETS : ne jamais les écrire ici. Pose-les avec `npx wrangler secret put <NOM>` :

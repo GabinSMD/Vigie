@@ -53,7 +53,7 @@ Pourquoi ce découpage : aucun jeton Claude ne quitte le pilote ; Vigie ne déti
 
 ## 4. Hébergement — recommandation : Cloudflare
 
-| | Cloudflare (Pages + Worker + KV/D1) | Homelab |
+| | Cloudflare (Worker + KV/D1) | Homelab |
 | --- | --- | --- |
 | Accessible depuis le téléphone, partout | Oui | Il faut l'exposer (tunnel) |
 | Authentification | Cloudflare Access, sans code à écrire | À monter |
@@ -61,7 +61,9 @@ Pourquoi ce découpage : aucun jeton Claude ne quitte le pilote ; Vigie ne déti
 | Coût | Offre gratuite suffisante pour un seul utilisateur | Déjà payé |
 | Le pilote peut y écrire | Oui (API) | Oui, si exposé |
 
-Recommandation : **Cloudflare**, Pages pour l'app, un Worker pour l'API, **KV** pour l'instantané et **D1** pour la file d'ordres et les réglages.
+Recommandation : **Cloudflare**, **un seul Worker** qui sert l'app (static assets de Workers, dossier `dist/`) et l'API (`/api/*`) sur le même nom d'hôte, **KV** pour l'instantané et **D1** pour la file d'ordres et les réglages.
+
+*Mise à jour (issue #15)* : il n'y a plus de projet Pages. Un seul déploiement (`npx wrangler deploy` dans `worker/`), un seul domaine personnalisé (`vigie.<domaine>`), pas de CORS, et Cloudflare Access protège l'app et l'API d'un coup. L'app est construite avec `VITE_API_URL=/` (même origine). Le Worker reçoit chaque requête (`run_worker_first`) : il répond à `/api/*` et renvoie le reste aux fichiers de l'app. Le script `npm run mise-en-route` fait toute la mise en place (voir [`mise-en-route.md`](./mise-en-route.md)).
 
 ## 5. Sécurité
 
@@ -94,7 +96,7 @@ Chaque étape fait l'objet d'une issue et d'une PR séparées.
 
 | # | Décision | Choix | Statut |
 | --- | --- | --- | --- |
-| D1 | Hébergement | Cloudflare (Pages + Worker + KV/D1) | Validé |
+| D1 | Hébergement | Cloudflare (un Worker qui sert l'app et l'API + KV/D1 ; plus de Pages depuis #15) | Validé |
 | D2 | Connexion à l'app | Cloudflare Access, ta seule adresse | Validé |
 | D3 | Accès GitHub | GitHub App « Vigie », lecture seule, dépôts suivis seulement | Validé |
 | D4 | Qui fusionne | Étape 4 seulement ; d'ici là, le bouton ouvre la PR sur GitHub | Validé |

@@ -6,6 +6,8 @@ import { readProjects, type ProjetConfig } from './projets';
 
 export interface Env extends GithubEnv {
   VIGIE_SNAPSHOT: KVNamespace;
+  /** Fichiers de l'app (`dist/`), servis par le même Worker (static assets). Absent en test. */
+  ASSETS?: Fetcher;
 }
 
 export interface Deps {
@@ -65,6 +67,15 @@ export async function handle(request: Request, env: Env, deps: Deps = defaults()
   return json({ error: 'not_found' }, 404);
 }
 
+const isApi = (pathname: string) => pathname === '/api' || pathname.startsWith('/api/');
+
+/** Point d'entrée : `/api/*` passe par l'API, tout le reste est servi depuis les fichiers de l'app. */
+export async function route(request: Request, env: Env, deps?: Deps): Promise<Response> {
+  if (isApi(new URL(request.url).pathname)) return handle(request, env, deps);
+  if (!env.ASSETS) return json({ error: 'not_found' }, 404);
+  return env.ASSETS.fetch(request);
+}
+
 export default {
-  fetch: (request: Request, env: Env) => handle(request, env),
+  fetch: (request: Request, env: Env) => route(request, env),
 };
