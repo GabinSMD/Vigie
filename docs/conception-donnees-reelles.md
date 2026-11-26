@@ -92,7 +92,7 @@ Recommandation : **1** pour la première version. Les plafonds de **sessions par
 
 Chaque étape fait l'objet d'une issue et d'une PR séparées.
 
-*Proposition (issue #18, à valider)* : l'étape 2 commence par les décisions en attente de ta réponse (format `decision`, source issues et PR dans le Worker, carte généralisée, ordre `repondre`). Spécification et découpage en lots : [`specs/en-attente-de-reponse.md`](./specs/en-attente-de-reponse.md).
+*Validé le 26/11/2026 (issue #18)* : l'étape 2 commence par les décisions en attente de ta réponse (format `decision`, source issues et PR dans le Worker, carte généralisée, ordre `repondre`). Spécification et découpage en lots : [`specs/en-attente-de-reponse.md`](./specs/en-attente-de-reponse.md).
 
 ## 8. Décisions
 
