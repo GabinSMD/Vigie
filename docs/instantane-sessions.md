@@ -61,7 +61,7 @@ Ce que le **pilote** écrit dans KV et que le Worker relit (`GET /api/sessions`)
 | `sessions[].linkedPr` | `#466` | non | PR liée dans le même projet. |
 | `sessions[].disconnected` | `{lastSeen}` | non | Présent si la session ne répond plus ; elle apparaît alors comme blocage. |
 | `sessions[].costUsd` | nombre | non | Coût en dollars, **non affiché** en V1. |
-| `sessions[].questions[]` | `{id, title, detail, prRef}` | non | Questions oui/non posées par la session. |
+| `sessions[].questions[]` | `{id, title, detail, prRef}` | non | Questions oui/non posées par la session. Champs facultatifs proposés (options, recommandation, réversible, texte libre, liens) : voir [`specs/en-attente-de-reponse.md`](specs/en-attente-de-reponse.md) § 2.3, pas encore lus par l'app. |
 | `sessions[].deliverables[]` | `{id, title}` | non | Livrables à valider. |
 
 ## Réponse de `GET /api/sessions`
