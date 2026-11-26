@@ -1,7 +1,7 @@
 # En attente de ta réponse — spécification
 
-Statut : **proposition, à valider par Gabin avant tout code.** Refs #18.
-Rien n'est branché ; cette page décrit le format, l'écran, l'ordre `repondre` et les sources. Les points que Gabin doit trancher sont listés au § 9 (D10 à D15).
+Statut : **validée le 26/11/2026**, décisions D10 à D15 retenues telles que proposées (§ 9). Refs #18.
+Rien n'est branché ; cette page décrit le format, l'écran, l'ordre `repondre` et les sources. Les décisions D10 à D15 sont au § 9.
 
 ## 1. Le besoin
 
@@ -272,7 +272,7 @@ Relève de l'étape 2 de la note de conception (ordres sans risque, via la file)
 
 La mission de cette session demandait **15 minutes**. Avec D6 (le pilote passe toutes les heures, de 8 h à 21 h, heure de Paris), un ordre de 15 minutes expirerait presque toujours avant d'être pris. La note de conception (§ 5) et l'issue #18 demandent **au moins 3 h**.
 
-Proposition par défaut : `expiresAt = max(createdAt + 3 h, prochain passage de 8 h + 1 h)`, donc une réponse donnée à 23 h attend le passage de 8 h et expire à 9 h. Le pilote ignore tout ordre expiré, inconnu ou déjà traité (même `id`). **À trancher par Gabin : D10** (15 min n'a de sens que si le Worker peut réveiller le pilote à chaque dépôt, ce qui demanderait un jeton Claude hors du pilote, contraire à D5).
+Retenu (D10) : `expiresAt = max(createdAt + 3 h, prochain passage de 8 h + 1 h)`, donc une réponse donnée à 23 h attend le passage de 8 h et expire à 9 h. Le pilote ignore tout ordre expiré, inconnu ou déjà traité (même `id`). (15 min n'a de sens que si le Worker peut réveiller le pilote à chaque dépôt, ce qui demanderait un jeton Claude hors du pilote, contraire à D5).
 
 ### 4.4 Exécution par le pilote
 
@@ -354,7 +354,7 @@ Tant que Vigie n'est pas en ligne, le pilote liste les décisions dans son point
 
 ## 6. Réponse par défaut après délai
 
-**Hors V1.** Si Gabin la veut plus tard (D12) :
+**Hors V1, prévue en V2 (D12)**, avec ces garde-fous :
 
 - **Réglage par projet**, désactivé par défaut, activé avec confirmation (comme la fusion automatique), avec un délai minimal de 24 h.
 - Ne s'applique qu'aux décisions **réversibles**, avec une option `recommended`, et dont le `topic` n'est **ni** `securite`, **ni** `argent`, **ni** `donnees`, **ni** `legal`. La seule déclaration « réversible » de l'agent ne suffit pas : le `topic` et le réglage du projet doivent aussi l'autoriser.
@@ -380,9 +380,9 @@ Chaque lot est autonome, fait l'objet d'une issue et d'une PR séparées, et sui
 4. **Ordre `repondre`** : D1 (ordres + journal), vérification Access, `POST /api/ordres`, filtre de secrets, états de la carte, puis exécution par le pilote (gabarit, repli sur l'issue). La partie pilote se fait dans le dépôt du pilote, pas dans Vigie.
 5. **Point du soir** : le pilote liste les décisions au format § 5.6. Peut être fait tout de suite, avant le lot 2.
 
-## 9. Décisions pour Gabin
+## 9. Décisions (validées le 26/11/2026)
 
-| # | Question | Proposition | Réversible |
+| # | Question | Choix retenu | Réversible |
 | --- | --- | --- | --- |
 | D10 | Expiration d'un ordre `repondre` : 15 min (mission) ou 3 h (D6, note § 5, issue #18) ? | 3 h, et les ordres de nuit attendent le passage de 8 h | oui |
 | D11 | Donner à la GitHub App « Vigie » l'écriture sur issues et PR pour commenter, ou laisser le pilote commenter ? | Le pilote commente ; l'App reste en lecture seule (D3 inchangée) | oui |
@@ -391,4 +391,4 @@ Chaque lot est autonome, fait l'objet d'une issue et d'une PR séparées, et sui
 | D14 | Dependabot majeures : options `migrer` / `attendre` / `ignorer` et délai de 14 jours pour `attendre` | Tel quel | oui |
 | D15 | Étiquette `decision` à créer sur les 8 dépôts suivis | Oui, créée par le lot 2 ou à la main | oui |
 
-Écarts entre la mission de cette session et l'issue #18, choisis ici en attendant ton avis : nom du fichier (`docs/specs/en-attente-de-reponse.md` plutôt que `docs/decisions-en-attente.md`), nom de la section (« En attente de ta réponse » dans « À faire par toi », sans écran séparé), expiration (D10), réponse par défaut décrite mais hors V1 (D12).
+Écarts entre la mission de cette session et l'issue #18, retenus avec la validation : nom du fichier (`docs/specs/en-attente-de-reponse.md` plutôt que `docs/decisions-en-attente.md`), nom de la section (« En attente de ta réponse » dans « À faire par toi », sans écran séparé), expiration de 3 h (D10), réponse par défaut décrite mais hors V1 (D12).
