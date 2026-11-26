@@ -51,6 +51,7 @@ Règles d'analyse, sans ambiguïté :
 4. Bloc invalide (champ obligatoire absent, `recommended` hors des options, plus de 5 options, longueurs dépassées) : il n'est **pas** transformé en carte de décision. La session reste affichée avec son `waitingFor` habituel, et le résumé porte « Bloc de décision illisible : <raison> » pour que l'agent le corrige.
 5. Plusieurs blocs dans un même texte : chacun est une décision ; deux blocs avec le même `id` dans le même texte : le dernier gagne, **même s'il est invalide** (il n'y a alors aucune carte, seulement l'erreur, pour que Gabin ne réponde pas à des options déjà remplacées).
 6. Le bloc ne contient **jamais** de secret ni de lien `claude.ai/code/session_…`.
+7. Un bloc `decision` cité dans un autre bloc de code (par exemple un ```` ````markdown ```` qui montre la forme à suivre) est une citation : il est ignoré. Seuls les blocs de premier niveau comptent.
 
 Exemple complet, tel qu'une session l'écrit dans sa Passation (FFD-Connect, #1039) :
 
@@ -323,6 +324,8 @@ Le Worker lit déjà les issues et les PR ouvertes des 8 dépôts suivis. Il ajo
 
 Nouveau point d'entrée `GET /api/decisions` (lecture seule, même cache que `/api/projets`), qui renvoie les décisions normalisées des issues et des PR, plus celles de l'instantané, après déduplication (§ 5.3), et l'état des ordres. Cette source ne dépend pas du pilote : elle est à jour à chaque chargement.
 
+Mise en œuvre (lot 2, `worker/src/decisions.ts`) : réponse `DecisionsResponse` (`src/data/api.ts`) avec `generatedAt`, `snapshotAt`, `decisions` (bloquantes d'abord, puis les plus anciennes) et `errors` (projets dont la lecture GitHub a échoué). Le Worker n'ayant pas de mémoire, `askedAt` vaut la date de création de l'issue ou de la PR, ou `askedAt` de la question (à défaut `generatedAt` de l'instantané). Une question de l'instantané est relue avec les mêmes règles que le bloc (§ 2.2) ; sans champ de bloc, elle devient un oui/non avec `context` = `detail`, `reversible: non` et `topic: technique`, et un `id` hors du format `[a-z0-9-]{3,60}` (ex. `q1`) l'écarte. `answer` reste absent jusqu'au lot 4.
+
 Une décision d'issue ou de PR est « en attente » tant que l'issue ou la PR est ouverte **et** qu'aucun ordre `fait` ne lui répond. Pour la reposer (nouvelle question), l'agent change l'`id`.
 
 ### 5.3 Déduplication
@@ -370,8 +373,8 @@ Tant que Vigie n'est pas en ligne, le pilote liste les décisions dans son point
   - préfixes connus, en début de mot : `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `glpat-`, `sk-`, `sk_live_`, `xox`, `AIza`, `AKIA`/`ASIA` suivis de 16 majuscules ou chiffres, et `-----BEGIN` ;
   - affectation : `password`, `passwd`, `pwd`, `mot de passe`, `motdepasse`, `secret`, `token`, `api_key`/`apikey`, y compris dans un nom composé (`accessToken`, `dbPassword`, `clientSecret`), suivis de `=` (espaces permis), directement de `:`, ou d'un guillemet puis `:` (`"password" : "x"`). « le secret : sur penny », avec l'espace française avant les deux-points, passe ;
   - identifiants dans une adresse (`postgres://user:motdepasse@hôte`) et adresses de webhook Slack (`hooks.slack.com/services/`) et Discord (`discord.com/api/webhooks/`) ;
-  - chaîne de 32 caractères ou plus dans `[A-Za-z0-9_+=]` mêlant lettres et chiffres ;
-  - chaîne base64 ou base64url de 32 caractères ou plus dans `[A-Za-z0-9+/=_-]` qui contient des majuscules, des minuscules et des chiffres (avant ce test, une adresse GitHub de forme attendue, `owner/repo` suivi au plus de `/pull/<n>`, `/issues/<n>` ou `/blob|tree/<branche>/<chemin>`, est réduite au chemin du fichier, qui reste testé ; toute autre adresse est testée en entier ; les identifiants et chemins en minuscules passent).
+  - chaîne de 32 caractères ou plus dans `[A-Za-z0-9_+=]` mêlant lettres et chiffres, sauf un SHA de commit complet (exactement 40 caractères hexadécimaux en minuscules) ;
+  - chaîne base64 ou base64url de 32 caractères ou plus dans `[A-Za-z0-9+/=_-]` qui contient des majuscules, des minuscules et des chiffres (avant ce test, une adresse GitHub de forme attendue, `owner/repo` suivi au plus de `/pull/<n>`, `/issues/<n>`, `/commit/<SHA>` ou `/blob|tree/<branche>/<chemin>`, est réduite au chemin du fichier, qui reste testé ; toute autre adresse est testée en entier ; les identifiants et chemins en minuscules passent).
 
   C'est un garde-fou, pas une garantie : la règle reste la vraie protection.
 - **Pilote** : applique le même filtre avant `send_message` ou un commentaire ; en cas de doute, il refuse l'ordre (« Ressemble à un secret ») au lieu de le transmettre.

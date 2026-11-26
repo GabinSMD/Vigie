@@ -35,6 +35,13 @@ const WEBHOOK = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhoo
 const LONG_TOKEN = /[A-Za-z0-9_+=]{32,}/g;
 
 /**
+ * SHA de commit complet : exactement 40 caractères hexadécimaux en minuscules, comme Git et GitHub
+ * l'écrivent. Seule exception au test précédent : 39 ou 41 caractères, des majuscules, un `_` ou un `=`
+ * collé, ou 64 caractères restent refusés.
+ */
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
+
+/**
  * Base64 et base64url : 32 caractères ou plus dans `[A-Za-z0-9+/=_-]`, avec majuscules, minuscules
  * et chiffres. Les identifiants `1039-critere-reprise-…` et les chemins `docs/specs/…` n'ont pas
  * de majuscules ; les adresses GitHub de forme attendue sont allégées avant ce test (`githubShapes`).
@@ -42,9 +49,12 @@ const LONG_TOKEN = /[A-Za-z0-9_+=]{32,}/g;
 const BASE64 = /[A-Za-z0-9+/=_-]{32,}/g;
 
 const GITHUB_URL = /https:\/\/github\.com\/[^\s<>()"'\]]*/g;
-/** `owner/repo`, suivi au plus de `/pull/<n>`, `/issues/<n>` ou `/blob|tree/<branche>/<chemin>`. */
+/**
+ * `owner/repo`, suivi au plus de `/pull/<n>`, `/issues/<n>`, `/commit/<SHA>` (7 à 40 caractères
+ * hexadécimaux en minuscules) ou `/blob|tree/<branche>/<chemin>`.
+ */
 const GITHUB_SHAPE =
-  /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\/(?:pull|issues)\/\d+|\/(?:blob|tree)\/[\w.-]+(\/.*)?)?\/?$/;
+  /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\/(?:pull|issues)\/\d+|\/commit\/[0-9a-f]{7,40}|\/(?:blob|tree)\/[\w.-]+(\/.*)?)?\/?$/;
 
 /**
  * Retire d'une adresse GitHub ce qui est sûr (le dépôt, le numéro, la branche) et garde le chemin
@@ -67,7 +77,7 @@ export function looksLikeSecret(input: string): boolean {
   const text = input.normalize('NFKC');
   if ([KNOWN_PREFIX, PRIVATE_KEY, ASSIGNMENT, URL_CREDENTIALS, WEBHOOK].some((r) => r.test(text))) return true;
   for (const [token] of text.matchAll(LONG_TOKEN)) {
-    if (mixes(token, /[A-Za-z]/, /[0-9]/)) return true;
+    if (mixes(token, /[A-Za-z]/, /[0-9]/) && !COMMIT_SHA.test(token)) return true;
   }
   for (const [token] of githubShapes(text).matchAll(BASE64)) {
     if (mixes(token, /[A-Z]/, /[a-z]/, /[0-9]/)) return true;

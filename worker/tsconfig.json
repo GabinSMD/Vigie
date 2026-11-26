@@ -12,5 +12,5 @@
     "resolveJsonModule": true,
     "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["src", "../src/data/api.ts", "../src/data/snapshot.ts", "../src/data/types.ts"]
+  "include": ["src", "../src/data/api.ts", "../src/data/snapshot.ts", "../src/data/types.ts", "../src/data/decision.ts", "../src/data/secrets.ts"]
 }

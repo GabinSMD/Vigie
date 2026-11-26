@@ -1,6 +1,7 @@
-import type { ProjetsResponse, SessionsResponse } from '../../src/data/api';
+import type { DecisionsResponse, ProjetsResponse, SessionsResponse } from '../../src/data/api';
 import type { SessionSnapshot } from '../../src/data/snapshot';
 import config from '../../config/projets.json';
+import { readDecisions, type Log } from './decisions';
 import { GithubClient, type FetchFn, type GithubEnv } from './github';
 import { readProjects, type ProjetConfig } from './projets';
 
@@ -14,6 +15,8 @@ export interface Deps {
   fetch: FetchFn;
   projets: ProjetConfig[];
   now: () => Date;
+  /** Journal du Worker (`wrangler tail`). Jamais le contenu d'un bloc ni un secret. */
+  log?: Log;
 }
 
 export const SNAPSHOT_KEY = 'snapshot';
@@ -28,9 +31,24 @@ const defaults = (): Deps => ({
   fetch: (input, init) => fetch(input, init),
   projets: (config.projets as { id: string; owner: string; repo: string; nom: string }[]),
   now: () => new Date(),
+  log: (line) => console.warn(line),
 });
 
-/** Routes en lecture seule : GET /api/projets et GET /api/sessions. Tout le reste est refusé. */
+/** Instantané écrit par le pilote : null s'il n'existe pas encore, `invalid` s'il est illisible. */
+async function readSnapshot(env: Env): Promise<SessionSnapshot | null | 'invalid'> {
+  const raw = await env.VIGIE_SNAPSHOT.get(SNAPSHOT_KEY);
+  if (raw === null) return null;
+  let snapshot: SessionSnapshot;
+  try {
+    snapshot = JSON.parse(raw) as SessionSnapshot;
+  } catch {
+    return 'invalid';
+  }
+  if (snapshot?.version !== 1 || !Array.isArray(snapshot.sessions) || typeof snapshot.generatedAt !== 'string') return 'invalid';
+  return snapshot;
+}
+
+/** Routes en lecture seule : GET /api/projets, /api/sessions et /api/decisions. Tout le reste est refusé. */
 export async function handle(request: Request, env: Env, deps: Deps = defaults()): Promise<Response> {
   const { pathname } = new URL(request.url);
   if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
@@ -46,22 +64,26 @@ export async function handle(request: Request, env: Env, deps: Deps = defaults()
   }
 
   if (pathname === '/api/sessions') {
-    const raw = await env.VIGIE_SNAPSHOT.get(SNAPSHOT_KEY);
-    if (raw === null) {
-      const empty: SessionsResponse = { snapshotAt: null, snapshot: null };
-      return json(empty);
-    }
-    let snapshot: SessionSnapshot;
-    try {
-      snapshot = JSON.parse(raw) as SessionSnapshot;
-    } catch {
-      return json({ error: 'snapshot_invalid' }, 502);
-    }
-    if (snapshot.version !== 1 || !Array.isArray(snapshot.sessions) || typeof snapshot.generatedAt !== 'string') {
-      return json({ error: 'snapshot_invalid' }, 502);
-    }
-    const body: SessionsResponse = { snapshotAt: snapshot.generatedAt, snapshot };
+    const snapshot = await readSnapshot(env);
+    if (snapshot === 'invalid') return json({ error: 'snapshot_invalid' }, 502);
+    const body: SessionsResponse = { snapshotAt: snapshot?.generatedAt ?? null, snapshot };
     return json(body);
+  }
+
+  if (pathname === '/api/decisions') {
+    const log = deps.log ?? (() => {});
+    try {
+      let snapshot = await readSnapshot(env);
+      if (snapshot === 'invalid') {
+        log('decisions: instantané illisible, questions des sessions ignorées');
+        snapshot = null;
+      }
+      const gh = new GithubClient(env, deps.fetch, () => deps.now().getTime());
+      const body: DecisionsResponse = await readDecisions(gh, deps.projets, snapshot, deps.now(), log);
+      return json(body);
+    } catch {
+      return json({ error: 'decisions_unavailable' }, 502);
+    }
   }
 
   return json({ error: 'not_found' }, 404);

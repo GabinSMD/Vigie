@@ -2,7 +2,7 @@
 // L'analyseur doit tourner sans navigateur : il sera appelé par le Worker (lot 2).
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { looksLikeSecret, parseDecisionBlocks, toDecision, toSnapshotQuestion } from './decision';
+import { extractFencedBlocks, looksLikeSecret, parseDecisionBlocks, toDecision, toSnapshotQuestion } from './decision';
 
 /** Entoure des lignes d'un bloc de code `decision`. */
 const block = (...lines: string[]) => ['```decision', ...lines, '```'].join('\n');
@@ -408,6 +408,43 @@ describe('règle 6 : jamais de secret ni de lien de session', () => {
   });
 });
 
+describe('blocs cités dans un bloc englobant', () => {
+  it("ignore un bloc decision cité dans un bloc ````markdown (exemple dans une issue ou une PR)", () => {
+    const text = `Voici la forme à suivre :\n\n\`\`\`\`markdown\n${minimal()}\n\`\`\`\`\n`;
+    expect(parseDecisionBlocks(text)).toEqual({ decisions: [], errors: [], warnings: [] });
+  });
+
+  it('ignore aussi un bloc cité dans ~~~, dans un bloc sans langue, ou dans un bloc englobant jamais fermé', () => {
+    for (const text of [
+      `~~~text\n${minimal()}\n~~~`,
+      `\`\`\`\`\n${minimal()}\n\`\`\`\``,
+      `\`\`\`\`\`markdown\n\`\`\`\`markdown\n${minimal()}\n\`\`\`\`\n\`\`\`\`\``,
+      `\`\`\`\`markdown\n${minimal()}\n`,
+    ]) {
+      expect(parseDecisionBlocks(text).decisions).toEqual([]);
+      expect(parseDecisionBlocks(text).errors).toEqual([]);
+    }
+  });
+
+  it('lit le bloc qui suit un bloc de code ordinaire fermé', () => {
+    const text = `\`\`\`ts\nconst a = 1;\n\`\`\`\n\n${minimal()}`;
+    expect(parseDecisionBlocks(text).decisions.map((d) => d.id)).toEqual(['1039-critere-reprise']);
+  });
+
+  it("une ligne de code qui commence par ``` suivi d'autres ``` n'ouvre pas de bloc", () => {
+    const text = `\`\`\`\` \`\`\`decision \`\`\`\`\n\n${minimal()}`;
+    expect(parseDecisionBlocks(text).decisions.map((d) => d.id)).toEqual(['1039-critere-reprise']);
+  });
+
+  it('extractFencedBlocks rend les blocs de premier niveau avec leur langue', () => {
+    const text = `avant\n\`\`\`\`markdown\n${minimal()}\n\`\`\`\`\n~~~ json\n{}\n~~~`;
+    const blocks = extractFencedBlocks(text);
+    expect(blocks.map((b) => b.info)).toEqual(['markdown', 'json']);
+    expect(blocks[0].lines.join('\n')).toBe(minimal());
+    expect(blocks.every((b) => !b.unclosed)).toBe(true);
+  });
+});
+
 describe('looksLikeSecret', () => {
   it.each([
     'La PR #1039 reste en brouillon.',
@@ -430,8 +467,27 @@ describe('looksLikeSecret', () => {
     'https://github.com/SIMOND-ANCE-BROS/FFD-Connect/tree/feat/22-decision-type-parser',
     'https://github.com/GabinSMD/Vigie/blob/main/src/components/DecisionCard.tsx',
     '12345678901234567890123456789012345',
+    'Corrigé par le commit 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f.',
+    'https://github.com/GabinSMD/Vigie/commit/6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f',
+    'Entre 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f et 313129e0a1b2c3d4e5f60718293a4b5c6d7e8f90',
   ])('laisse passer « %s »', (text) => {
     expect(looksLikeSecret(text)).toBe(false);
+  });
+
+  it.each([
+    ['hexadécimal de 41 caractères', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f0'],
+    ['hexadécimal de 39 caractères', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3'],
+    ['hexadécimal de 64 caractères', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f6298356c1f2a4b7e9d0c3a8b'],
+    ['SHA en majuscules', '6298356C1F2A4B7E9D0C3A8B5E1F4D2C7A9B0E3F'],
+    ['SHA collé à un suffixe', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f_x'],
+    ['SHA collé à un préfixe', 'x6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f'],
+    ['SHA suivi de =', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f=='],
+    ['40 caractères hors hexadécimal', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0z3f'],
+    ['affectation', 'token=6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f'],
+    ['secret après une adresse de commit', 'https://github.com/foo/bar/commit/6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f/wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY'],
+    ['commit de 41 caractères dans une adresse', 'https://github.com/GabinSMD/Vigie/commit/6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f0'],
+  ])('refuse un %s', (_nom, text) => {
+    expect(looksLikeSecret(text)).toBe(true);
   });
 
   it.each([
@@ -525,9 +581,15 @@ describe('exemples de la documentation', () => {
     ['regle-emission-decision.md', ['1039-critere-reprise', '1033-test-android', '1031-cle-github-app', '204-limite-coupe']],
     ['specs/en-attente-de-reponse.md', ['1039-critere-reprise', '1033-test-android']],
   ])('chaque bloc de %s est valide', (path, ids) => {
-    const { decisions, errors, warnings } = parseDecisionBlocks(read(path));
-    expect(errors).toEqual([]);
-    expect(warnings).toEqual([]);
-    expect(decisions.map((d) => d.id)).toEqual(ids);
+    // Les exemples sont cités dans des blocs ````markdown, que l'analyseur ignore : on lit leur contenu.
+    const quoted = (text: string): string[] =>
+      extractFencedBlocks(text)
+        .filter((b) => b.info === 'markdown')
+        .flatMap((b) => [b.lines.join('\n'), ...quoted(b.lines.join('\n'))]);
+    expect(parseDecisionBlocks(read(path)).decisions).toEqual([]);
+    const results = quoted(read(path)).map(parseDecisionBlocks);
+    expect(results.flatMap((r) => r.errors)).toEqual([]);
+    expect(results.flatMap((r) => r.warnings)).toEqual([]);
+    expect(results.flatMap((r) => r.decisions.map((d) => d.id))).toEqual(ids);
   });
 });

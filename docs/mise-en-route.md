@@ -71,6 +71,7 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
 - `https://vigie.<ton-domaine>` dans une fenêtre privée → la page de connexion Access.
 - Connecté : `https://vigie.<ton-domaine>/api/projets` → du JSON avec tes 8 projets. Un projet avec `"error": "github_404"` ou `"github_403"` : l'App n'est pas installée sur ce dépôt, ou n'a pas la bonne permission.
 - `https://vigie.<ton-domaine>/api/sessions` → `{"snapshotAt":null,"snapshot":null}` tant que le pilote n'écrit rien. L'app dit alors « Le pilote n'a pas encore écrit d'instantané ».
+- `https://vigie.<ton-domaine>/api/decisions` → les décisions en attente de ta réponse (issues étiquetées `decision`, descriptions de PR, Dependabot majeures, questions de l'instantané), `"decisions": []` s'il n'y en a aucune. Les blocs illisibles sont notés dans le journal du Worker (`npx wrangler tail`), sans leur contenu.
 
 ## 5. Ce qui reste après le script
 

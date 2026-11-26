@@ -135,3 +135,14 @@ export interface Decision extends DecisionBlock {
   source: DecisionSource;
   answer?: DecisionAnswer;
 }
+
+/** Réponse de `GET /api/decisions` (§ 5.2) : décisions des issues, des PR, de Dependabot et de l'instantané, dédupliquées. */
+export interface DecisionsResponse {
+  generatedAt: string;
+  /** Date de l'instantané dont viennent les questions des sessions ; null s'il manque ou est illisible. */
+  snapshotAt: string | null;
+  /** Bloquantes d'abord, puis de la plus ancienne à la plus récente. Clé unique : `(projectId, id)`. */
+  decisions: Decision[];
+  /** Projets dont la lecture GitHub a échoué : leurs décisions d'issues et de PR manquent. */
+  errors: { projectId: string; error: string }[];
+}

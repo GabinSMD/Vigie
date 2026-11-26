@@ -64,13 +64,27 @@ const length = (s: string) => [...s].length;
 
 class Invalid extends Error {}
 
-/** Découpe le texte en blocs ```decision (ou ~~~decision). Un bloc jamais fermé est rendu avec `unclosed`. */
-function extractBlocks(text: string): { lines: string[]; unclosed: boolean }[] {
+export interface FencedBlock {
+  /** Texte après l'ouverture (la langue), sans les espaces autour ; vide s'il n'y en a pas. */
+  info: string;
+  lines: string[];
+  /** Jamais fermé : le bloc court jusqu'à la fin du texte. */
+  unclosed: boolean;
+}
+
+/** Ouverture de bloc (CommonMark) : 3 ` ou ~ au moins ; après des `, la langue ne contient pas de `. */
+const FENCE_OPEN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
+
+/**
+ * Blocs de code de premier niveau (``` ou ~~~). Le contenu d'un bloc n'est pas relu : un bloc
+ * ```decision cité dans un bloc ````markdown (exemple dans une issue ou une PR) reste une citation.
+ */
+export function extractFencedBlocks(text: string): FencedBlock[] {
   const all = text.split(/\r?\n/);
-  const blocks: { lines: string[]; unclosed: boolean }[] = [];
+  const blocks: FencedBlock[] = [];
   let i = 0;
   while (i < all.length) {
-    const open = /^ {0,3}(`{3,}|~{3,})[ \t]*decision[ \t]*$/.exec(all[i]);
+    const open = FENCE_OPEN.exec(all[i]);
     if (!open) {
       i++;
       continue;
@@ -80,10 +94,15 @@ function extractBlocks(text: string): { lines: string[]; unclosed: boolean }[] {
     const lines: string[] = [];
     i++;
     while (i < all.length && !close.test(all[i])) lines.push(all[i++]);
-    blocks.push({ lines, unclosed: i >= all.length });
+    blocks.push({ info: open[2].trim(), lines, unclosed: i >= all.length });
     i++;
   }
   return blocks;
+}
+
+/** Blocs ```decision (ou ~~~decision) de premier niveau. Un bloc jamais fermé est rendu avec `unclosed`. */
+function extractBlocks(text: string): { lines: string[]; unclosed: boolean }[] {
+  return extractFencedBlocks(text).filter((b) => b.info === 'decision');
 }
 
 function parseOption(value: string): DecisionOption {
