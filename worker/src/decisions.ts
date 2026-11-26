@@ -16,12 +16,14 @@ export type Log = (line: string) => void;
 
 interface GhIssue {
   number: number;
+  author_association?: string;
   body?: string | null;
   created_at: string;
   pull_request?: unknown;
 }
 interface GhPull {
   number: number;
+  author_association?: string;
   title: string;
   body?: string | null;
   created_at: string;
@@ -33,15 +35,32 @@ interface GhCheckRuns {
 }
 
 const DEPENDABOT = 'dependabot[bot]';
+
+/**
+ * Seuls les blocs écrits par un auteur de confiance deviennent des décisions : sur un dépôt public,
+ * n'importe qui peut ouvrir une PR ou une issue. `author_association` est déjà dans les listes REST.
+ * Les PR Dependabot n'en font pas partie : leur description recopie des notes de version écrites par des tiers.
+ */
+const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const ID_FORMAT = /^[a-z0-9-]{3,60}$/;
+
+const cut = (s: string, max: number) => ([...s].length <= max ? s : `${[...s].slice(0, max - 1).join('')}…`);
 
 /** Id qu'on peut écrire dans le journal : bien formé et sans air de secret. */
 const safeId = (id: unknown): string | undefined =>
   typeof id === 'string' && ID_FORMAT.test(id) && !looksLikeSecret(id) ? id : undefined;
 
+/** Au plus 10 lignes de journal par texte lu, de 160 caractères au plus chacune (les noms de clés inconnues viennent du bloc). */
+const MAX_LOG_LINES = 10;
+const MAX_LOG_LENGTH = 160;
+
 function logParse(log: Log, where: string, result: Pick<ParseResult, 'errors' | 'warnings'>) {
-  for (const e of result.errors) log(`decisions: ${where} : bloc illisible${e.id ? ` « ${e.id} »` : ''} : ${e.reason}`);
-  for (const w of result.warnings) log(`decisions: ${where} : ${w}`);
+  const lines = [
+    ...result.errors.map((e) => `decisions: ${where} : bloc illisible${e.id ? ` « ${e.id} »` : ''} : ${e.reason}`),
+    ...result.warnings.map((w) => `decisions: ${where} : ${w}`),
+  ];
+  for (const line of lines.slice(0, MAX_LOG_LINES)) log(cut(line, MAX_LOG_LENGTH));
+  if (lines.length > MAX_LOG_LINES) log(`decisions: ${where} : ${lines.length - MAX_LOG_LINES} autres lignes non écrites`);
 }
 
 /* --- Dependabot (§ 5.5, D14) --- */
@@ -57,7 +76,6 @@ export function dependabotMajor(title: string): { name: string; from: number; to
 
 const CI_LABEL: Record<CiState, string> = { success: 'réussie', failure: 'en échec', pending: 'en cours', none: 'aucun check' };
 
-const cut = (s: string, max: number) => ([...s].length <= max ? s : `${[...s].slice(0, max - 1).join('')}…`);
 
 async function dependabotDecision(
   gh: GithubClient,
@@ -101,19 +119,29 @@ async function readProjectDecisions(gh: GithubClient, p: ProjetConfig, log: Log)
     gh.get<GhPull[]>(p.owner, `${base}/pulls?state=open&per_page=30`),
   ]);
   const out: Decision[] = [];
-  const fromText = (text: string | null | undefined, where: string, origin: Omit<Parameters<typeof toDecision>[1], 'projectId'>) => {
-    if (!text) return;
-    const result = parseDecisionBlocks(text);
+  const fromText = (
+    item: { body?: string | null; author_association?: string },
+    where: string,
+    origin: Omit<Parameters<typeof toDecision>[1], 'projectId'>,
+  ) => {
+    if (!item.body) return;
+    const result = parseDecisionBlocks(item.body);
+    if (!TRUSTED.has(item.author_association ?? '')) {
+      // Rien n'est repris, pas même les erreurs : seulement le fait qu'un bloc a été écarté.
+      if (result.decisions.length + result.errors.length > 0) log(`decisions: ${p.id} ${where} : auteur non autorisé, ignoré`);
+      return;
+    }
     logParse(log, `${p.id} ${where}`, result);
     for (const block of result.decisions) out.push(toDecision(block, { projectId: p.id, ...origin }));
   };
 
   for (const i of issues) {
     if (i.pull_request) continue; // Les PR sont lues par la liste des PR.
-    fromText(i.body, `issue #${i.number}`, { askedAt: i.created_at, askedBy: { kind: 'issue', number: i.number }, source: 'issue' });
+    fromText(i, `issue #${i.number}`, { askedAt: i.created_at, askedBy: { kind: 'issue', number: i.number }, source: 'issue' });
   }
   for (const pr of pulls) {
-    fromText(pr.body, `PR #${pr.number}`, { askedAt: pr.created_at, askedBy: { kind: 'pr', number: pr.number }, source: 'pr' });
+    if (pr.user?.login === DEPENDABOT) continue; // Décision générée plus bas ; la description n'est pas lue.
+    fromText(pr, `PR #${pr.number}`, { askedAt: pr.created_at, askedBy: { kind: 'pr', number: pr.number }, source: 'pr' });
   }
   const majors = pulls.flatMap((pr) => {
     const bump = pr.user?.login === DEPENDABOT ? dependabotMajor(pr.title) : null;
@@ -158,7 +186,9 @@ function questionToBlock(q: Record<string, unknown>): string {
   for (const o of optional(q.options, list) ?? []) {
     const opt = (o ?? {}) as Record<string, unknown>;
     const detail = optional(opt.detail, text);
-    lines.push(`option: ${text(opt.id)} | ${text(opt.label)}${detail !== undefined ? ` | ${detail}` : ''}`);
+    const parts = [text(opt.id), text(opt.label), ...(detail !== undefined ? [detail] : [])];
+    if (parts.some((part) => part.includes('|'))) throw new BadField('« option » : caractère | interdit');
+    lines.push(`option: ${parts.join(' | ')}`);
   }
   const recommended = optional(q.recommended, text);
   if (recommended !== undefined) lines.push(`recommended: ${recommended}`);
@@ -211,7 +241,10 @@ function sessionDecisions(snapshot: SessionSnapshot, log: Log): Decision[] {
 
 /* --- Déduplication (§ 5.3) --- */
 
-/** L'issue ou la PR gagne (durable, lisible sur GitHub), puis la décision générée pour Dependabot, puis la session. */
+/**
+ * L'issue ou la PR gagne (durable, lisible sur GitHub), puis la décision générée pour Dependabot, puis la session.
+ * Seuls les auteurs de confiance arrivent jusqu'ici (`TRUSTED`) : un tiers ne peut pas remplacer une question.
+ */
 const RANK: Record<Decision['source'], number> = { pr: 3, issue: 3, dependabot: 2, session: 1 };
 
 const content = (d: Decision) => {

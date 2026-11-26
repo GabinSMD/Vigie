@@ -35,11 +35,16 @@ const WEBHOOK = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhoo
 const LONG_TOKEN = /[A-Za-z0-9_+=]{32,}/g;
 
 /**
- * SHA de commit complet : exactement 40 caractères hexadécimaux en minuscules, comme Git et GitHub
- * l'écrivent. Seule exception au test précédent : 39 ou 41 caractères, des majuscules, un `_` ou un `=`
- * collé, ou 64 caractères restent refusés.
+ * SHA de commit complet : exactement 40 caractères hexadécimaux en minuscules. C'est aussi la forme des
+ * anciens jetons GitHub (avant 2021) : un SHA nu reste refusé. Il ne passe que juste après « commit » ou
+ * « SHA » (`commit 6298…`, `SHA: 6298…`, `(sha:6298…)`) ou dans une adresse `https://github.com/<owner>/<repo>/commit/`.
  */
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
+const SHA_CONTEXT = /(?:(?<![A-Za-z0-9_])(?:commit|sha)(?: +|: *)|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/)$/i;
+
+/** Un SHA de commit annoncé comme tel. Seuls les 200 caractères qui précèdent sont relus (temps linéaire). */
+const isAnnouncedSha = (text: string, token: string, index: number) =>
+  COMMIT_SHA.test(token) && SHA_CONTEXT.test(text.slice(Math.max(0, index - 200), index));
 
 /**
  * Base64 et base64url : 32 caractères ou plus dans `[A-Za-z0-9+/=_-]`, avec majuscules, minuscules
@@ -76,8 +81,8 @@ export function looksLikeSecret(input: string): boolean {
   // NFKC : les lettres pleine chasse (« ｇｈｐ＿ ») redeviennent des lettres ordinaires.
   const text = input.normalize('NFKC');
   if ([KNOWN_PREFIX, PRIVATE_KEY, ASSIGNMENT, URL_CREDENTIALS, WEBHOOK].some((r) => r.test(text))) return true;
-  for (const [token] of text.matchAll(LONG_TOKEN)) {
-    if (mixes(token, /[A-Za-z]/, /[0-9]/) && !COMMIT_SHA.test(token)) return true;
+  for (const { 0: token, index } of text.matchAll(LONG_TOKEN)) {
+    if (mixes(token, /[A-Za-z]/, /[0-9]/) && !isAnnouncedSha(text, token, index)) return true;
   }
   for (const [token] of githubShapes(text).matchAll(BASE64)) {
     if (mixes(token, /[A-Z]/, /[a-z]/, /[0-9]/)) return true;

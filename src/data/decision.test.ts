@@ -469,12 +469,20 @@ describe('looksLikeSecret', () => {
     '12345678901234567890123456789012345',
     'Corrigé par le commit 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f.',
     'https://github.com/GabinSMD/Vigie/commit/6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f',
-    'Entre 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f et 313129e0a1b2c3d4e5f60718293a4b5c6d7e8f90',
+    'Corrigé par le Commit 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f',
+    'SHA 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f, puis commit: 313129e0a1b2c3d4e5f60718293a4b5c6d7e8f90',
+    '(sha:6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f)',
   ])('laisse passer « %s »', (text) => {
     expect(looksLikeSecret(text)).toBe(false);
   });
 
   it.each([
+    ['SHA nu (format des anciens jetons GitHub)', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f'],
+    ['SHA nu dans une phrase', 'La clé est 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f, garde-la.'],
+    ['deux SHA nus séparés par -', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f-313129e0a1b2c3d4e5f60718293a4b5c6d7e8f90'],
+    ['second SHA sans contexte', 'commit 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f et 313129e0a1b2c3d4e5f60718293a4b5c6d7e8f90'],
+    ['SHA après un mot qui finit par commit', 'recommit 6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f'],
+    ['SHA dans une adresse /commit/ hors GitHub', 'https://exemple.org/commit/6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f'],
     ['hexadécimal de 41 caractères', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f0'],
     ['hexadécimal de 39 caractères', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3'],
     ['hexadécimal de 64 caractères', '6298356c1f2a4b7e9d0c3a8b5e1f4d2c7a9b0e3f6298356c1f2a4b7e9d0c3a8b'],

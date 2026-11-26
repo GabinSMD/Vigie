@@ -75,6 +75,7 @@ const issue = (number: number, body: string | null, extra: Record<string, unknow
   body,
   created_at: '2026-11-20T08:00:00Z',
   labels: [{ name: 'decision' }],
+  author_association: 'OWNER',
   ...extra,
 });
 
@@ -86,13 +87,19 @@ const pull = (number: number, body: string | null, extra: Record<string, unknown
   base: { ref: 'main' },
   head: { sha: `sha${number}` },
   user: { login: 'GabinSMD' },
+  author_association: 'OWNER',
   body,
   created_at: '2026-11-21T08:00:00Z',
   ...extra,
 });
 
 const dependabot = (number: number, title: string) =>
-  pull(number, 'Bumps x. Release notes…', { title, user: { login: 'dependabot[bot]' }, created_at: '2026-11-22T08:00:00Z' });
+  pull(number, 'Bumps x. Release notes…', {
+    title,
+    user: { login: 'dependabot[bot]' },
+    author_association: 'NONE',
+    created_at: '2026-11-22T08:00:00Z',
+  });
 
 async function call(repos: Record<string, FakeRepo>, snapshot: unknown = null) {
   const gh = fakeGithub(repos);
@@ -240,9 +247,8 @@ describe('GET /api/decisions : Dependabot majeures (§ 5.5, D14)', () => {
     expect(checkCalls).toEqual(['/repos/GabinSMD/Vigie/commits/sha44/check-runs']);
   });
 
-  it("un bloc de même id dans la PR l'emporte (pour ajouter une recommandation), liens fusionnés", async () => {
-    const pr = dependabot(40, 'Bump vite from 6.3.5 to 7.0.0');
-    pr.body = block(
+  it("un bloc de même id dans une issue `decision` de confiance l'emporte (pour ajouter une recommandation), liens fusionnés", async () => {
+    const text = block(
       'id: dependabot-40',
       'question: Passer vite de la version 6 à 7 ?',
       'context: La migration touche vite.config.ts.',
@@ -254,11 +260,11 @@ describe('GET /api/decisions : Dependabot majeures (§ 5.5, D14)', () => {
       'topic: technique',
       'link: issue #7',
     );
-    const { body } = await call({ 'GabinSMD/Vigie': { pulls: [pr] } });
+    const { body } = await call({ 'GabinSMD/Vigie': { issues: [issue(7, text)], pulls: [dependabot(40, 'Bump vite from 6.3.5 to 7.0.0')] } });
     expect(body.decisions).toHaveLength(1);
     expect(body.decisions[0]).toMatchObject({
       id: 'dependabot-40',
-      source: 'pr',
+      source: 'issue',
       recommended: 'migrer',
       context: ['La migration touche vite.config.ts.'],
       links: [
@@ -266,6 +272,14 @@ describe('GET /api/decisions : Dependabot majeures (§ 5.5, D14)', () => {
         { kind: 'pr', number: 40 },
       ],
     });
+  });
+
+  it('ne lit jamais les blocs de la description d\'une PR Dependabot (notes de version écrites par des tiers)', async () => {
+    const pr = dependabot(40, 'Bump vite from 6.3.5 to 7.0.0');
+    pr.body = `Release notes\n\n${minimal('dependabot-40', 'recommended: oui', 'blocking: oui')}\n${minimal('40-piege')}`;
+    const { body } = await call({ 'GabinSMD/Vigie': { pulls: [pr] } });
+    expect(body.decisions.map((d) => [d.id, d.source])).toEqual([['dependabot-40', 'dependabot']]);
+    expect(body.decisions[0]).not.toHaveProperty('recommended');
   });
 
   it.each([
@@ -349,10 +363,12 @@ describe("GET /api/decisions : questions de l'instantané et déduplication (§ 
         { ...question, id: '5-secret', context: ['Le jeton ghp_abcdefghijklmnop'] },
         { ...question, id: '5-injection', title: 'Quel nom ?\nrecommended: a' },
         { ...question, id: '5-type', options: 'pas une liste' },
+        { ...question, id: '5-barre', options: [{ id: 'a', label: 'Oui | non' }, { id: 'b', label: 'B' }] },
       ]),
     );
     expect(body.decisions).toEqual([]);
-    expect(logs).toHaveLength(4);
+    expect(logs).toHaveLength(5);
+    expect(logs[4]).toBe('decisions: vigie session session_01ABC : bloc illisible « 5-barre » : « option » : caractère | interdit');
     expect(logs.join('\n')).not.toMatch(/ghp_|abcdefgh|Ancien format|pas une liste/);
     expect(logs[1]).toContain('ressemble à un secret');
   });
@@ -404,6 +420,63 @@ describe("GET /api/decisions : questions de l'instantané et déduplication (§ 
   });
 });
 
+describe('GET /api/decisions : auteurs de confiance seulement', () => {
+  const sessionQuestion = {
+    version: 1,
+    generatedAt: '2026-11-26T09:00:00Z',
+    sessions: [
+      {
+        id: 'session_01ABC',
+        projectId: 'vigie',
+        role: 'Développeur',
+        title: 't',
+        status: 'attention',
+        statusLabel: 'x',
+        line: 'l',
+        summary: 's',
+        events: [],
+        questions: [{ id: '12-migration', title: 'On migre ?', detail: 'Contexte légitime.', prRef: '#12', reversible: true }],
+      },
+    ],
+  };
+
+  it.each(['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE', 'MANNEQUIN', undefined])(
+    'une PR ou une issue d\'un auteur %s ne donne aucune décision et ne masque pas la session',
+    async (association) => {
+      const piege = minimal('12-migration', 'topic: securite', 'blocking: oui', 'recommended: oui').replace('topic: technique\n', '');
+      const { body, logs } = await call(
+        {
+          'GabinSMD/Vigie': {
+            pulls: [pull(12, piege, { author_association: association, user: { login: 'inconnu' } })],
+            issues: [issue(13, minimal('13-piege'), { author_association: association })],
+          },
+        },
+        sessionQuestion,
+      );
+      expect(body.decisions.map((d) => [d.id, d.source, d.question])).toEqual([['12-migration', 'session', 'On migre ?']]);
+      expect(logs).toEqual(['decisions: vigie issue #13 : auteur non autorisé, ignoré', 'decisions: vigie PR #12 : auteur non autorisé, ignoré']);
+    },
+  );
+
+  it('accepte les auteurs OWNER, MEMBER et COLLABORATOR', async () => {
+    const { body } = await call({
+      'GabinSMD/Vigie': {
+        pulls: [
+          pull(12, minimal('12-owner')),
+          pull(13, minimal('13-member'), { author_association: 'MEMBER' }),
+          pull(14, minimal('14-collaborator'), { author_association: 'COLLABORATOR' }),
+        ],
+      },
+    });
+    expect(body.decisions.map((d) => d.id).sort()).toEqual(['12-owner', '13-member', '14-collaborator']);
+  });
+
+  it("ne note rien pour une PR tierce sans bloc decision", async () => {
+    const { logs } = await call({ 'GabinSMD/Vigie': { pulls: [pull(12, 'Une PR ordinaire.', { author_association: 'NONE' })] } });
+    expect(logs).toEqual([]);
+  });
+});
+
 describe('GET /api/decisions : journal et erreurs', () => {
   it('note les blocs illisibles et les clés inconnues, jamais avec leur contenu', async () => {
     const secret = minimal('5-secret', 'context: password=hunter2');
@@ -419,6 +492,14 @@ describe('GET /api/decisions : journal et erreurs', () => {
       'decisions: vigie PR #12 : bloc illisible « 12-sans-topic » : champ « topic » absent',
     ]);
     expect(`${logs.join('\n')}\n${text}`).not.toMatch(/hunter|texte libre|confidentielle/);
+  });
+
+  it('borne le journal : 10 lignes au plus par texte, chacune de 160 caractères au plus', async () => {
+    const keys = Array.from({ length: 30 }, (_, i) => `${'k'.repeat(200)}${String.fromCharCode(97 + (i % 26))}${i >= 26 ? 'z' : ''}: x`);
+    const { logs } = await call({ 'GabinSMD/Vigie': { issues: [issue(5, minimal('5-bavard', ...keys))] } });
+    expect(logs).toHaveLength(11);
+    expect(logs[10]).toBe('decisions: vigie issue #5 : 20 autres lignes non écrites');
+    expect(logs.every((l) => [...l].length <= 160)).toBe(true);
   });
 
   it("un dépôt en échec n'empêche pas les autres et ne renvoie aucun détail sensible", async () => {
