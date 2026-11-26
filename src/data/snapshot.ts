@@ -1,3 +1,4 @@
+import type { DecisionFreeText, DecisionKind, DecisionLink, DecisionOption, DecisionTopic } from './api';
 import type { EventKind, Status } from './types';
 
 /**
@@ -14,13 +15,34 @@ export interface SnapshotEvent {
   at: string;
 }
 
+/**
+ * Question posée par une session. Les trois premiers champs sont ceux de la v1 ; les suivants,
+ * tous facultatifs, viennent d'un bloc `decision` (docs/specs/en-attente-de-reponse.md § 2.3).
+ * Une question sans `options` reste une question oui/non.
+ */
 export interface SnapshotQuestion {
   id: string;
+  /** La question (champ `question` du bloc). */
   title: string;
-  /** Complément affiché sous la question, ex. « en brouillon ». */
+  /** Complément affiché sous la question : première ligne du contexte, ou « en brouillon ». */
   detail: string;
-  /** PR concernée, ex. « #204 ». */
+  /** PR concernée, ex. « #204 » ; sinon la première issue liée ; vide si aucun lien. */
   prRef: string;
+  // --- Champs ajoutés, tous facultatifs ---
+  kind?: DecisionKind;
+  /** 1 ou 2 lignes. */
+  context?: string[];
+  /** 2 à 5 options. Absent : oui/non. */
+  options?: DecisionOption[];
+  /** Id d'une option (ou `oui`/`non` sans options). */
+  recommended?: string;
+  reversible?: boolean;
+  topic?: DecisionTopic;
+  freeText?: DecisionFreeText;
+  links?: DecisionLink[];
+  blocking?: boolean;
+  /** ISO 8601 UTC. */
+  askedAt?: string;
 }
 
 export interface SnapshotDeliverable {
