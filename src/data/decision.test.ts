@@ -378,6 +378,14 @@ describe('règle 6 : jamais de secret ni de lien de session', () => {
     ['webhook Slack', 'context: https://hooks.slack.com/services/T000/B000/XXXX'],
     ['webhook Discord', 'context: https://discord.com/api/webhooks/123/abc'],
     ['jeton en pleine chasse', 'context: ｇｈｐ＿abc'],
+    ['accessToken=', 'context: accessToken=abc'],
+    ['authtoken =', 'context: authtoken = x'],
+    ['dbPassword=', 'context: dbPassword=x'],
+    ['"accessToken": en JSON', 'context: {"accessToken": "abc"}'],
+    ['"clientSecret": en JSON', 'context: {"clientSecret": "x"}'],
+    ['clientSecret:', 'context: clientSecret: x'],
+    ['"password" : avec espace', 'context: {"password" : "x"}'],
+    ['secret dans une adresse GitHub', 'context: https://github.com/foo/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
     ['clé inconnue', 'note: ghp_cache-dans-une-cle-inconnue'],
     ['ligne sans clé', 'Une ligne libre avec ghp_xyz'],
   ])('refuse un bloc qui contient un %s', (_nom, line) => {
@@ -417,9 +425,25 @@ describe('looksLikeSecret', () => {
     'Où poser le secret : dans le fichier prévu sur penny.',
     'Le token GitHub a expiré, le pilote attend le nouveau fichier.',
     'Une ASIA-PACIFIC, un AKIA court.',
+    'Voir https://github.com/SIMOND-ANCE-BROS/FFD-Connect/pull/1039.',
+    '(https://github.com/SIMOND-ANCE-BROS/FFD-Connect/issues/1020)',
+    'https://github.com/SIMOND-ANCE-BROS/FFD-Connect/tree/feat/22-decision-type-parser',
+    'https://github.com/GabinSMD/Vigie/blob/main/src/components/DecisionCard.tsx',
     '12345678901234567890123456789012345',
   ])('laisse passer « %s »', (text) => {
     expect(looksLikeSecret(text)).toBe(false);
+  });
+
+  it.each([
+    ['lettres', 'x'.repeat(200_000)],
+    ['mots-clés', 'token'.repeat(40_000)],
+    ['adresse', 'a://' + 'b'.repeat(200_000)],
+    ['points', 'https://github.com/' + '.'.repeat(200_000) + 'a'],
+  ])('reste linéaire sur 200 000 caractères (%s)', (_nom, text) => {
+    const start = performance.now();
+    looksLikeSecret(text);
+    // Une expression quadratique y passerait plusieurs dizaines de secondes.
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });
 

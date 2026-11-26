@@ -15,14 +15,18 @@ const KNOWN_PREFIX =
 const PRIVATE_KEY = /-----BEGIN/;
 
 /**
- * `password=`, `password: x`, `"password": "x"`, `mot de passe =`, `api_key=`…
- * Le `:` doit suivre le mot directement : « le secret : sur penny » (typographie française) passe.
+ * `password=`, `password: x`, `"password" : "x"`, `mot de passe =`, `api_key=`, et les noms composés
+ * (`accessToken=`, `dbPassword=`, `"clientSecret":`). Sans guillemet, le `:` doit suivre le mot
+ * directement : « le secret : sur penny » (typographie française) passe.
  */
 const ASSIGNMENT =
-  /(?<![A-Za-z])(?:password|passwd|pwd|mot\s*de\s*passe|motdepasse|secret|token|api[_-]?key)(?:["']?\s*=|["']?:)/i;
+  /(?:password|passwd|pwd|mot\s*de\s*passe|motdepasse|secret|token|api[_-]?key)(?:["']?\s*=|:|["']\s*:)/i;
 
-/** Identifiants dans une adresse : `postgres://user:motdepasse@hôte`. */
-const URL_CREDENTIALS = /[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i;
+/**
+ * Identifiants dans une adresse : `postgres://user:motdepasse@hôte`. Le schéma est ancré en début
+ * de mot : sans cet ancrage, une longue suite de lettres serait relue depuis chaque position (temps quadratique).
+ */
+const URL_CREDENTIALS = /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i;
 
 /** Adresses de webhook qui portent leur jeton en clair. */
 const WEBHOOK = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\//i;
@@ -33,10 +37,28 @@ const LONG_TOKEN = /[A-Za-z0-9_+=]{32,}/g;
 /**
  * Base64 et base64url : 32 caractères ou plus dans `[A-Za-z0-9+/=_-]`, avec majuscules, minuscules
  * et chiffres. Les identifiants `1039-critere-reprise-…` et les chemins `docs/specs/…` n'ont pas
- * de majuscules ; les adresses GitHub sont retirées avant ce test.
+ * de majuscules ; les adresses GitHub de forme attendue sont allégées avant ce test (`githubShapes`).
  */
 const BASE64 = /[A-Za-z0-9+/=_-]{32,}/g;
-const GITHUB_URL = /https:\/\/github\.com\/[A-Za-z0-9_./-]*/g;
+
+const GITHUB_URL = /https:\/\/github\.com\/[^\s<>()"'\]]*/g;
+/** `owner/repo`, suivi au plus de `/pull/<n>`, `/issues/<n>` ou `/blob|tree/<branche>/<chemin>`. */
+const GITHUB_SHAPE =
+  /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\/(?:pull|issues)\/\d+|\/(?:blob|tree)\/[\w.-]+(\/.*)?)?\/?$/;
+
+/**
+ * Retire d'une adresse GitHub ce qui est sûr (le dépôt, le numéro, la branche) et garde le chemin
+ * d'un fichier, qui reste testé. Une adresse d'une autre forme est laissée telle quelle.
+ */
+function githubShapes(text: string): string {
+  return text.replace(GITHUB_URL, (url) => {
+    let end = url.length;
+    while (end > 0 && '.,;:!?'.includes(url[end - 1])) end--; // Ponctuation de fin de phrase.
+    const trimmed = url.slice(0, end);
+    const m = GITHUB_SHAPE.exec(trimmed);
+    return m ? ` ${m[1] ?? ''} ` : url;
+  });
+}
 
 const mixes = (token: string, ...classes: RegExp[]) => classes.every((c) => c.test(token));
 
@@ -47,7 +69,7 @@ export function looksLikeSecret(input: string): boolean {
   for (const [token] of text.matchAll(LONG_TOKEN)) {
     if (mixes(token, /[A-Za-z]/, /[0-9]/)) return true;
   }
-  for (const [token] of text.replace(GITHUB_URL, ' ').matchAll(BASE64)) {
+  for (const [token] of githubShapes(text).matchAll(BASE64)) {
     if (mixes(token, /[A-Z]/, /[a-z]/, /[0-9]/)) return true;
   }
   return false;

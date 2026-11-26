@@ -368,10 +368,10 @@ Tant que Vigie n'est pas en ligne, le pilote liste les décisions dans son point
 - **Écran** : avertissement permanent sous chaque champ texte : « Ne colle jamais de clé, de jeton ni de mot de passe ici : pose-le dans un fichier sur penny et écris seulement où. »
 - **Worker** : refuse (422) un texte qui ressemble à un secret, avec ce même message. Filtre de référence : `looksLikeSecret` dans `src/data/secrets.ts`, appliqué après normalisation Unicode NFKC :
   - préfixes connus, en début de mot : `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `glpat-`, `sk-`, `sk_live_`, `xox`, `AIza`, `AKIA`/`ASIA` suivis de 16 majuscules ou chiffres, et `-----BEGIN` ;
-  - affectation : `password`, `passwd`, `pwd`, `mot de passe`, `motdepasse`, `secret`, `token`, `api_key`/`apikey`, suivis de `=` (espaces permis) ou directement de `:` (y compris `"password":`). « le secret : sur penny », avec l'espace française avant les deux-points, passe ;
+  - affectation : `password`, `passwd`, `pwd`, `mot de passe`, `motdepasse`, `secret`, `token`, `api_key`/`apikey`, y compris dans un nom composé (`accessToken`, `dbPassword`, `clientSecret`), suivis de `=` (espaces permis), directement de `:`, ou d'un guillemet puis `:` (`"password" : "x"`). « le secret : sur penny », avec l'espace française avant les deux-points, passe ;
   - identifiants dans une adresse (`postgres://user:motdepasse@hôte`) et adresses de webhook Slack (`hooks.slack.com/services/`) et Discord (`discord.com/api/webhooks/`) ;
   - chaîne de 32 caractères ou plus dans `[A-Za-z0-9_+=]` mêlant lettres et chiffres ;
-  - chaîne base64 ou base64url de 32 caractères ou plus dans `[A-Za-z0-9+/=_-]` qui contient des majuscules, des minuscules et des chiffres (les adresses `https://github.com/…` sont retirées avant ce test ; les identifiants et chemins en minuscules passent).
+  - chaîne base64 ou base64url de 32 caractères ou plus dans `[A-Za-z0-9+/=_-]` qui contient des majuscules, des minuscules et des chiffres (avant ce test, une adresse GitHub de forme attendue, `owner/repo` suivi au plus de `/pull/<n>`, `/issues/<n>` ou `/blob|tree/<branche>/<chemin>`, est réduite au chemin du fichier, qui reste testé ; toute autre adresse est testée en entier ; les identifiants et chemins en minuscules passent).
 
   C'est un garde-fou, pas une garantie : la règle reste la vraie protection.
 - **Pilote** : applique le même filtre avant `send_message` ou un commentaire ; en cas de doute, il refuse l'ordre (« Ressemble à un secret ») au lieu de le transmettre.
