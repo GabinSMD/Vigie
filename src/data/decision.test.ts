@@ -249,7 +249,7 @@ describe('règle 4 : bloc invalide, jamais transformé en décision', () => {
       '« option » : écrire « id | libellé | détail »',
     );
     expect(invalid(minimal('option: A_1 | A', 'option: b | B')).reason).toBe(
-      '« option » : identifiant « A_1 » hors du format [a-z0-9-]{1,20}',
+      '« option » : identifiant hors du format [a-z0-9-]{1,20}',
     );
     expect(invalid(minimal(`option: a | ${'l'.repeat(61)}`, 'option: b | B')).reason).toBe(
       '« option » : libellé de plus de 60 caractères',
@@ -257,7 +257,7 @@ describe('règle 4 : bloc invalide, jamais transformé en décision', () => {
     expect(invalid(minimal(`option: a | A | ${'d'.repeat(101)}`, 'option: b | B')).reason).toBe(
       '« option » : détail de plus de 100 caractères',
     );
-    expect(invalid(minimal('option: a | A', 'option: a | B')).reason).toBe('« option » : identifiant « a » en double');
+    expect(invalid(minimal('option: a | A', 'option: a | B')).reason).toBe('« option » : identifiant en double');
     expect(invalid(minimal('option: a |  ', 'option: b | B')).reason).toBe(
       '« option » : écrire « id | libellé | détail »',
     );
@@ -265,14 +265,14 @@ describe('règle 4 : bloc invalide, jamais transformé en décision', () => {
 
   it('recommended hors des options', () => {
     expect(invalid(minimal('option: a | A', 'option: b | B', 'recommended: c')).reason).toBe(
-      '« recommended » : « c » ne fait pas partie des options',
+      '« recommended » ne fait pas partie des options',
     );
   });
 
   it('sans options, recommended se compare aux options implicites oui/non', () => {
     expect(parseDecisionBlocks(minimal('recommended: oui')).decisions[0].recommended).toBe('oui');
     expect(invalid(minimal('recommended: peut-etre')).reason).toBe(
-      '« recommended » : « peut-etre » ne fait pas partie des options',
+      '« recommended » ne fait pas partie des options',
     );
   });
 
@@ -318,6 +318,22 @@ describe('règle 5 : plusieurs blocs dans un même texte', () => {
     expect(decisions[0].topic).toBe('produit');
   });
 
+  it('même id deux fois, le dernier invalide : aucune décision, seulement l\'erreur', () => {
+    // L'agent a remplacé ses options : Gabin ne doit pas répondre aux anciennes.
+    const premier = minimal('option: a | A', 'option: b | B');
+    const dernier = minimal('option: a | A', 'option: c | C', 'recommended: z');
+    const { decisions, errors } = parseDecisionBlocks(`${premier}\n${dernier}`);
+    expect(decisions).toEqual([]);
+    expect(errors).toEqual([{ id: '1039-critere-reprise', reason: '« recommended » ne fait pas partie des options' }]);
+  });
+
+  it('un bloc valide après un bloc invalide de même id redevient la décision', () => {
+    const casse = minimal('recommended: z');
+    const { decisions, errors } = parseDecisionBlocks(`${casse}\n${minimal()}`);
+    expect(decisions.map((d) => d.id)).toEqual(['1039-critere-reprise']);
+    expect(errors).toHaveLength(1);
+  });
+
   it("un bloc invalide n'empêche pas de lire les autres", () => {
     const casse = block('id: casse', 'question: ?');
     const { decisions, errors } = parseDecisionBlocks(`${casse}\n${minimal()}`);
@@ -340,6 +356,28 @@ describe('règle 6 : jamais de secret ni de lien de session', () => {
     ['password=', 'context: password=hunter2'],
     ['motdepasse=', 'context: motdepasse = soleil'],
     ['token=', 'context: TOKEN=abc'],
+    ['clé secrète AWS en base64 avec /', 'context: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
+    ['chaîne base64 coupée par /', 'context: Zm9vYmFyYmF6cXV4/Zm9vYmFyYmF6cXV4Zm9v1'],
+    ['chaîne base64url avec -', 'context: Zm9vYmFy-YmF6cXV4_Zm9vYmFy-YmF6cXV4Zm9v'],
+    ['jeton GitHub de serveur', 'context: ghs_abc'],
+    ['jeton GitHub utilisateur', 'context: ghu_abc'],
+    ['jeton GitHub de rafraîchissement', 'context: ghr_abc'],
+    ['jeton GitLab', 'context: glpat-abcdEFGH1234'],
+    ['clé Google', 'context: AIzaSyFAKEfakeFAKEfake'],
+    ['clé AWS temporaire', 'context: ASIAIOSFODNN7EXAMPLE'],
+    ['password:', 'context: password: hunter2'],
+    ['"password": en JSON', 'context: {"password": "hunter2"}'],
+    ['mot de passe =', 'context: mot de passe = soleil'],
+    ['passwd=', 'context: passwd=soleil'],
+    ['pwd=', 'context: pwd=soleil'],
+    ['secret=', 'context: secret=soleil'],
+    ['api_key=', 'context: api_key=soleil'],
+    ['apikey=', 'context: APIKEY=soleil'],
+    ['identifiants dans une URL', 'context: postgres://vigie:soleil@db.example/vigie'],
+    ['identifiants dans une URL https', 'context: https://vigie:soleil@example.org'],
+    ['webhook Slack', 'context: https://hooks.slack.com/services/T000/B000/XXXX'],
+    ['webhook Discord', 'context: https://discord.com/api/webhooks/123/abc'],
+    ['jeton en pleine chasse', 'context: ｇｈｐ＿abc'],
     ['clé inconnue', 'note: ghp_cache-dans-une-cle-inconnue'],
     ['ligne sans clé', 'Une ligne libre avec ghp_xyz'],
   ])('refuse un bloc qui contient un %s', (_nom, line) => {
@@ -347,7 +385,7 @@ describe('règle 6 : jamais de secret ni de lien de session', () => {
     expect(decisions).toEqual([]);
     expect(errors).toEqual([{ id: '1039-critere-reprise', reason: 'ressemble à un secret' }]);
     // Le secret n'est jamais recopié, ni dans l'erreur, ni dans les avertissements.
-    expect(JSON.stringify({ errors, warnings })).not.toMatch(/ghp_|sk-|xox|AKIA|BEGIN|hunter|soleil|=abc/i);
+    expect(JSON.stringify({ errors, warnings })).not.toMatch(/gh[pousr]_|ｇｈｐ|glpat|AIza|sk-|xox|AKIA|ASIA|BEGIN|hunter|soleil|=abc|EXAMPLE|Zm9v|hooks|webhooks/i);
   });
 
   it("ne recopie pas l'id si c'est lui qui ressemble à un secret", () => {
@@ -371,6 +409,14 @@ describe('looksLikeSecret', () => {
     'Le mot de passe est dans le trousseau.',
     '2026-11-26T09:12:00Z',
     'abcdefghijklmnopqrstuvwxyzabcdefghij',
+    'https://github.com/GabinSMD/Vigie/pull/1039',
+    'Voir https://github.com/SIMOND-ANCE-BROS/FFD-Connect/blob/main/docs/specs/en-attente-de-reponse.md',
+    'docs/specs/en-attente-de-reponse.md et docs/conception-donnees-reelles.md',
+    'src/components/DecisionCard.tsx',
+    'id: 1039-critere-reprise-pour-les-mises-en-production-sur-staging',
+    'Où poser le secret : dans le fichier prévu sur penny.',
+    'Le token GitHub a expiré, le pilote attend le nouveau fichier.',
+    'Une ASIA-PACIFIC, un AKIA court.',
     '12345678901234567890123456789012345',
   ])('laisse passer « %s »', (text) => {
     expect(looksLikeSecret(text)).toBe(false);

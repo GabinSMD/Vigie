@@ -49,7 +49,7 @@ Règles d'analyse, sans ambiguïté :
 2. Clé inconnue : ignorée (pour pouvoir ajouter des champs plus tard), mais signalée dans le journal du pilote ou du Worker.
 3. Clé unique répétée (`question`, `recommended`…) : le bloc est **invalide**.
 4. Bloc invalide (champ obligatoire absent, `recommended` hors des options, plus de 5 options, longueurs dépassées) : il n'est **pas** transformé en carte de décision. La session reste affichée avec son `waitingFor` habituel, et le résumé porte « Bloc de décision illisible : <raison> » pour que l'agent le corrige.
-5. Plusieurs blocs dans un même texte : chacun est une décision ; deux blocs avec le même `id` dans le même texte : le dernier gagne.
+5. Plusieurs blocs dans un même texte : chacun est une décision ; deux blocs avec le même `id` dans le même texte : le dernier gagne, **même s'il est invalide** (il n'y a alors aucune carte, seulement l'erreur, pour que Gabin ne réponde pas à des options déjà remplacées).
 6. Le bloc ne contient **jamais** de secret ni de lien `claude.ai/code/session_…`.
 
 Exemple complet, tel qu'une session l'écrit dans sa Passation (FFD-Connect, #1039) :
@@ -366,7 +366,14 @@ Tant que Vigie n'est pas en ligne, le pilote liste les décisions dans son point
 
 - **Règle** : une décision ne demande jamais la valeur d'un secret, et une réponse n'en contient jamais. Un secret se pose **dans un fichier sur penny** ; la réponse dit seulement où (« posé dans le fichier prévu sur penny »). Une décision qui a besoin d'un secret est une `action` : « Pose la clé X sur penny » avec les options « Fait » / « Pas encore ».
 - **Écran** : avertissement permanent sous chaque champ texte : « Ne colle jamais de clé, de jeton ni de mot de passe ici : pose-le dans un fichier sur penny et écris seulement où. »
-- **Worker** : refuse (422) un texte qui ressemble à un secret, avec ce même message : préfixes connus (`ghp_`, `github_pat_`, `gho_`, `sk-`, `sk_live_`, `xox`, `AKIA`, `-----BEGIN`), chaîne de 32 caractères ou plus sans espace mêlant lettres et chiffres, motif `motdepasse=`/`password=`/`token=`. C'est un garde-fou, pas une garantie : la règle reste la vraie protection.
+- **Worker** : refuse (422) un texte qui ressemble à un secret, avec ce même message. Filtre de référence : `looksLikeSecret` dans `src/data/secrets.ts`, appliqué après normalisation Unicode NFKC :
+  - préfixes connus, en début de mot : `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `glpat-`, `sk-`, `sk_live_`, `xox`, `AIza`, `AKIA`/`ASIA` suivis de 16 majuscules ou chiffres, et `-----BEGIN` ;
+  - affectation : `password`, `passwd`, `pwd`, `mot de passe`, `motdepasse`, `secret`, `token`, `api_key`/`apikey`, suivis de `=` (espaces permis) ou directement de `:` (y compris `"password":`). « le secret : sur penny », avec l'espace française avant les deux-points, passe ;
+  - identifiants dans une adresse (`postgres://user:motdepasse@hôte`) et adresses de webhook Slack (`hooks.slack.com/services/`) et Discord (`discord.com/api/webhooks/`) ;
+  - chaîne de 32 caractères ou plus dans `[A-Za-z0-9_+=]` mêlant lettres et chiffres ;
+  - chaîne base64 ou base64url de 32 caractères ou plus dans `[A-Za-z0-9+/=_-]` qui contient des majuscules, des minuscules et des chiffres (les adresses `https://github.com/…` sont retirées avant ce test ; les identifiants et chemins en minuscules passent).
+
+  C'est un garde-fou, pas une garantie : la règle reste la vraie protection.
 - **Pilote** : applique le même filtre avant `send_message` ou un commentaire ; en cas de doute, il refuse l'ordre (« Ressemble à un secret ») au lieu de le transmettre.
 - Rien de tout cela n'est affiché, journalisé ni recopié dans l'instantané : un texte refusé n'est pas stocké.
 

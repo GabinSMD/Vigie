@@ -115,7 +115,7 @@ Exemple d'une question complète :
 }
 ```
 
-Aucun secret ni lien `claude.ai/code/session_…` : un bloc qui en contient (ou qui y ressemble : préfixes `ghp_`, `sk-`, `AKIA`…, longue chaîne de lettres et de chiffres, `password=`) est refusé en entier et n'est jamais recopié. L'app actuelle n'affiche encore que `title`, `detail` et `prRef` ; les autres champs seront lus par le lot 3 (écran).
+Aucun secret ni lien `claude.ai/code/session_…` : un bloc qui en contient (ou qui y ressemble : préfixes `ghp_`, `sk-`, `AKIA`…, longue chaîne de lettres et de chiffres, `password=`, identifiants dans une adresse ; liste complète dans la spécification § 7) est refusé en entier et n'est jamais recopié. L'app actuelle n'affiche encore que `title`, `detail` et `prRef` ; les autres champs seront lus par le lot 3 (écran).
 
 ## Réponse de `GET /api/sessions`
 

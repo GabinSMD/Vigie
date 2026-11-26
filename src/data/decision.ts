@@ -23,12 +23,12 @@ export { looksLikeSecret } from './secrets';
 export interface DecisionError {
   /** Absent si l'id manque, est mal formé ou ressemble lui-même à un secret. */
   id?: string;
-  /** Raison lisible, à afficher après « Bloc de décision illisible : ». */
+  /** Raison lisible, à afficher après « Bloc de décision illisible : ». Ne recopie aucune valeur du bloc. */
   reason: string;
 }
 
 export interface ParseResult {
-  /** Décisions valides, dans l'ordre du texte ; pour un même id, le dernier bloc gagne. */
+  /** Décisions valides, dans l'ordre du texte. Pour un même id, le dernier bloc gagne, même invalide (il n'y a alors que l'erreur). */
   decisions: DecisionBlock[];
   /** Blocs invalides : jamais transformés en décision. */
   errors: DecisionError[];
@@ -92,7 +92,7 @@ function parseOption(value: string): DecisionOption {
   if (parts.length < 2 || parts.length > 3 || !id || !label) {
     throw new Invalid('« option » : écrire « id | libellé | détail »');
   }
-  if (!OPTION_ID_FORMAT.test(id)) throw new Invalid(`« option » : identifiant « ${id} » hors du format [a-z0-9-]{1,20}`);
+  if (!OPTION_ID_FORMAT.test(id)) throw new Invalid('« option » : identifiant hors du format [a-z0-9-]{1,20}');
   if (length(label) > 60) throw new Invalid('« option » : libellé de plus de 60 caractères');
   if (detail && length(detail) > 100) throw new Invalid('« option » : détail de plus de 100 caractères');
   return detail ? { id, label, detail } : { id, label };
@@ -170,7 +170,7 @@ function parseBlock(lines: string[], unclosed: boolean, warnings: string[], setI
   if (options.length === 1 || options.length > 5) throw new Invalid('« option » : 2 à 5 options');
   const seen = new Set<string>();
   for (const o of options) {
-    if (seen.has(o.id)) throw new Invalid(`« option » : identifiant « ${o.id} » en double`);
+    if (seen.has(o.id)) throw new Invalid('« option » : identifiant en double');
     seen.add(o.id);
   }
 
@@ -184,7 +184,7 @@ function parseBlock(lines: string[], unclosed: boolean, warnings: string[], setI
   const recommended = single.get('recommended') || undefined;
   const effective = options.length > 0 ? options : IMPLICIT_OPTIONS;
   if (recommended !== undefined && !effective.some((o) => o.id === recommended)) {
-    throw new Invalid(`« recommended » : « ${recommended} » ne fait pas partie des options`);
+    throw new Invalid('« recommended » ne fait pas partie des options');
   }
 
   return {
@@ -220,6 +220,9 @@ export function parseDecisionBlocks(text: string): ParseResult {
       byId.set(decision.id, decision);
     } catch (e) {
       if (!(e instanceof Invalid)) throw e;
+      // Règle 5, lecture stricte : un dernier bloc invalide remplace aussi la version précédente,
+      // pour que Gabin ne réponde pas à des options que l'agent a déjà changées.
+      if (id !== undefined) byId.delete(id);
       errors.push(id !== undefined ? { id, reason: e.message } : { reason: e.message });
     }
     warnings.push(...blockWarnings);
