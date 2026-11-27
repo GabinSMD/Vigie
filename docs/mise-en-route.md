@@ -87,6 +87,41 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
   - **Où vit le pilote** : une tâche programmée horaire (« Pilote des sessions cloud ») réveille une session Claude qui tourne sur penny. Ses consignes et ses scripts sont versionnés dans le dépôt `GabinSMD/homelab-config`, dossier `pilote-cloud/`, puis recopiés dans `/mnt/ssd/claude-work/pilote-cloud/` sur penny (voir le README de ce dossier).
   - **Comment il écrit** : il construit le JSON à partir de `list_sessions`, puis lance `pilote-cloud/instantane.sh`, qui vérifie le format, refuse tout ce qui ressemble à un secret et écrit la clé avec l'API Cloudflare (travail suivi dans `GabinSMD/homelab-config#117`).
   - **Ce que tu dois poser sur penny** : un jeton d'API Cloudflare avec la permission « Workers KV Storage : Edit » dans `/mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token` (`chmod 600`, copie dans Vaultwarden), et l'identifiant de ton compte Cloudflare dans `/mnt/ssd/claude-work/pilote-cloud/cloudflare-account.id`. Cloudflare ne permet pas de limiter ce jeton à un seul espace KV : il peut écrire dans tous les KV du compte. Tant que ces fichiers manquent, le pilote saute l'étape sans rien signaler, et l'app dit « Le pilote n'a pas encore écrit d'instantané ».
+
+    **Le plus simple** : depuis ton Mac, à la racine du dépôt (avec `ssh penny` qui marche) :
+
+    ```sh
+    npm run jeton-pilote               # ou --dry-run pour voir ce qu'il ferait, --hote <alias> si penny a un autre nom
+    ```
+
+    Le script relève l'adresse publique de penny, te guide pour créer le jeton dans Cloudflare (permission **Compte → Workers KV Storage → Modifier**, rien d'autre, limité au compte de Vigie, **filtrage IP sur penny**), te demande de le coller sans l'afficher, le vérifie avec l'API Cloudflare (`/user/tokens/verify`, compte, accès au KV de `worker/wrangler.toml`), pose les deux fichiers sur penny, fait un essai bout en bout depuis penny (écrit, relit et supprime la clé `vigie-test-jeton`, jamais `snapshot`), puis propose de ranger le jeton dans Vaultwarden avec `vw.sh ecrire` sur penny (élément « Cloudflare — jeton KV du pilote Vigie », collection « Homelab — infra » du compte machine ; à défaut, `bw` s'il est déverrouillé). Le jeton ne passe que par l'entrée standard de `ssh` ou par le fichier posé : jamais sur le disque du Mac, jamais à l'écran, jamais en argument d'une commande.
+
+    Si `penny` n'est pas un alias ssh de ton Mac, donne l'adresse : `npm run jeton-pilote -- --hote root@<adresse Tailscale de penny>`. Les commandes de cette section marchent aussi dans fish : ce qui est entre apostrophes est exécuté par le shell de penny.
+
+    Dans le filtrage IP, mets l'IPv4 publique de chez toi **et**, si ton réseau a de l'IPv6, son préfixe `/64` (le script les affiche) : sinon les appels qui partent en IPv6, ceux du pilote compris, sont refusés (erreur 9109). Jamais l'adresse Tailscale (`100.x.x.x`) : Cloudflare ne la voit pas.
+
+    Avec le filtrage IP, les appels depuis le Mac peuvent être refusés : par défaut (`--verif auto`), le script vérifie d'abord depuis le Mac, puis reprend toutes les vérifications depuis penny dès que Cloudflare refuse un appel pour cause de filtrage IP (`curl` y lit l'en-tête d'autorisation sur son entrée standard). `--verif penny` va directement sur penny, `--verif mac` n'essaie que le Mac (jeton sans filtrage IP).
+
+    **À la main**, si tu préfères : crée le jeton comme ci-dessus sur <https://dash.cloudflare.com/profile/api-tokens>, puis sur penny :
+
+    ```sh
+    cd /mnt/ssd/claude-work/pilote-cloud
+    umask 077
+    read -rs JETON && printf '%s\n' "$JETON" > cloudflare-kv.token && unset JETON   # colle le jeton, puis Entrée
+    echo '<identifiant du compte>' > cloudflare-account.id
+    ```
+
+    Range aussi le jeton dans Vaultwarden, toujours sans le mettre en argument (`vw.sh ecrire` lit un fichier ; on lui passe une copie sans le retour à la ligne final) :
+
+    ```sh
+    ssh penny 'set -eu; umask 077; t=$(mktemp); trap "rm -f \"$t\"" EXIT
+    tr -d "\n" < /mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token > "$t"
+    vw.sh ecrire "Cloudflare — jeton KV du pilote Vigie" pilote-vigie "$t" https://dash.cloudflare.com/profile/api-tokens'
+    ```
+
+    Une erreur `Failed to link @bitwarden/cli: EEXIST` vient du cache de `bunx` et passe en relançant. Pour le ranger à la main depuis ton Mac, copie-le sans l'afficher : `ssh penny cat /mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token | tr -d '\n' | pbcopy`.
+
+    **Révoquer**, plus tard et seulement si besoin (fuite, penny remplacé, arrêt de Vigie) : Cloudflare → *Jetons API* → le jeton → *Supprimer*, puis `rm` du fichier sur penny.
   - **Vérifier** : après le passage suivant (de 8 h 13 à 21 h 13, heure de Paris), `https://vigie.<ton-domaine>/api/sessions` renvoie un `snapshotAt` récent.
 
   Pour tester l'écran sans le pilote, tu peux écrire un instantané vide à la main :
@@ -103,7 +138,7 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
 ## En local, sans rien déployer
 
 - App en données fictives : `npm run dev`.
-- Tests : `npm test` (app et script de mise en route) et `cd worker && npm test` (Worker, GitHub, KV, D1 et Access simulés ; clés générées à chaque exécution).
+- Tests : `npm test` (app, scripts de mise en route et du jeton du pilote) et `cd worker && npm test` (Worker, GitHub, KV, D1 et Access simulés ; clés générées à chaque exécution).
 - Worker en local : crée `worker/.dev.vars` (ignoré par git) avec les secrets, applique les migrations en local (`npx wrangler d1 migrations apply vigie --local`), `npm run build` à la racine, puis `cd worker && npx wrangler dev`. Sans Access devant, `/api/ordres` répond 401 : c'est voulu.
 
 ---
