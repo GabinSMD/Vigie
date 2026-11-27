@@ -34,8 +34,8 @@ export class OrdreError extends Error {
   }
 }
 
-const fail = (status: number, error: string, message?: string): never => {
-  throw new OrdreError(status, { error, ...(message ? { message } : {}) });
+const fail = (status: number, error: string, message?: string, extra: Partial<ApiError> = {}): never => {
+  throw new OrdreError(status, { error, ...(message ? { message } : {}), ...extra });
 };
 
 /** Messages affichés sur la carte (§ 3.3), en tutoiement. */
@@ -209,13 +209,18 @@ export async function createOrdre(db: D1Database, decision: Decision, req: Ordre
   const key = [decision.projectId, decision.id] as const;
 
   const blocking: OrdreStatus[] = decision.kind === 'action' ? ['pris'] : ['pris', 'fait'];
-  const holder = await db
-    .prepare(`SELECT status FROM ordres WHERE project_id = ?1 AND decision_id = ?2 AND status IN ('pris', 'fait') ORDER BY created_at DESC LIMIT 1`)
-    .bind(...key)
-    .first<{ status: OrdreStatus }>();
-  if (holder && blocking.includes(holder.status)) {
-    fail(409, holder.status === 'pris' ? 'deja_transmise' : 'deja_repondue', holder.status === 'pris' ? MESSAGES.deja_transmise : MESSAGES.deja_repondue);
-  }
+  /* Réponse prise ou transmise qui bloque le nouvel envoi : renvoyée avec le 409 pour que la carte l'affiche (§ 3.3). */
+  const holderOf = () =>
+    db
+      .prepare(`SELECT ${COLUMNS} FROM ordres WHERE project_id = ?1 AND decision_id = ?2 AND status IN ('pris', 'fait') ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+      .bind(...key)
+      .first<OrdreRow>();
+  const conflict = (row: OrdreRow | null): never =>
+    row?.status === 'fait'
+      ? fail(409, 'deja_repondue', MESSAGES.deja_repondue, { answer: toAnswer(row, nowIso) })
+      : fail(409, 'deja_transmise', MESSAGES.deja_transmise, row ? { answer: toAnswer(row, nowIso) } : {});
+  const holder = await holderOf();
+  if (holder && blocking.includes(holder.status)) conflict(holder);
   const replaced = await db
     .prepare(`SELECT id FROM ordres WHERE project_id = ?1 AND decision_id = ?2 AND status = 'en_attente' AND expires_at > ?3`)
     .bind(...key, nowIso)
@@ -272,7 +277,7 @@ export async function createOrdre(db: D1Database, decision: Decision, req: Ordre
       .bind(nowIso, by, replaced ? 'remplacer' : 'creer', ordre.id, ordre.projectId, ordre.decisionId, ordre.optionId, replaced ? `remplace ${replaced.id}` : 'en_attente'),
   ]);
   // Le pilote a pris l'ordre précédent entre la lecture et l'écriture.
-  if (!results[2]?.meta.changes) fail(409, 'deja_transmise', MESSAGES.deja_transmise);
+  if (!results[2]?.meta.changes) conflict(await holderOf());
   return ordre;
 }
 

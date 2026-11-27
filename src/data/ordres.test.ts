@@ -21,6 +21,17 @@ describe('postOrdre', () => {
     expect(JSON.stringify(result)).not.toContain('Texte');
   });
 
+  it('409 avec la réponse qui bloque : conflit, la réponse est reprise telle quelle', async () => {
+    const answer = { id: 'ord_A', status: 'pris', optionId: 'b', createdAt: '2026-11-24T14:00:00Z', expiresAt: '2026-11-24T17:00:00Z' };
+    const response = new Response(JSON.stringify({ error: 'deja_transmise', message: 'Déjà transmise.', answer }), { status: 409 });
+    expect(await postOrdre('/', req, async () => response)).toEqual({ kind: 'conflict', message: 'Déjà transmise.', answer });
+  });
+
+  it('409 sans réponse connue : « Refusée »', async () => {
+    const response = new Response(JSON.stringify({ error: 'deja_transmise', message: 'Déjà transmise.' }), { status: 409 });
+    expect(await postOrdre('/', req, async () => response)).toMatchObject({ kind: 'refused', answer: { status: 'refuse', reason: 'Déjà transmise.' } });
+  });
+
   it('201 illisible : traité comme une erreur réseau', async () => {
     expect(await postOrdre('/', req, async () => new Response('{}', { status: 201 }))).toEqual({ kind: 'error', message: NETWORK_ERROR });
   });

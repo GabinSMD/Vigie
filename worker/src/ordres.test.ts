@@ -308,8 +308,31 @@ describe('POST /api/ordres : écriture', () => {
     expect((await asPilot(ctx, 'PATCH', `/api/ordres/${ordre.id}`, { status: 'pris' })).status).toBe(200);
     const response = await asUser(ctx, answer('1039-critere-reprise', 'taux'));
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: 'deja_transmise', message: expect.stringContaining('Déjà transmise') });
+    // La réponse prise est renvoyée : la carte l'affiche « Envoyée », non modifiable, au lieu de « Refusée ».
+    expect(await response.json()).toMatchObject({
+      error: 'deja_transmise',
+      message: expect.stringContaining('Déjà transmise'),
+      answer: { id: ordre.id, status: 'pris', optionId: 'trois-verts', expiresAt: ordre.expiresAt },
+    });
     expect(ctx.count('ordres')).toBe(1);
+  });
+
+  it('409 avec la réponse prise si le pilote la prend entre la lecture et l\'écriture', async () => {
+    const ctx = setup();
+    const ordre = await created(await asUser(ctx, answer('1039-critere-reprise', 'trois-verts')));
+    const db = ctx.env.VIGIE_DB!;
+    ctx.env.VIGIE_DB = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: async (statements: D1PreparedStatement[]) => {
+        ctx.sqlite.exec(`UPDATE ordres SET status = 'pris', taken_at = '${NOW.toISOString()}' WHERE status = 'en_attente'`);
+        return db.batch(statements);
+      },
+    } as unknown as D1Database;
+    const response = await asUser(ctx, answer('1039-critere-reprise', 'taux'));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'deja_transmise', answer: { id: ordre.id, status: 'pris', optionId: 'trois-verts' } });
+    expect(ctx.count('ordres')).toBe(1);
+    expect(ctx.count('journal')).toBe(1);
   });
 
   it('409 « Déjà répondue » après `fait`, sauf pour une action (« Pas encore » ne clôt pas)', async () => {
@@ -319,7 +342,12 @@ describe('POST /api/ordres : écriture', () => {
       await asPilot(ctx, 'PATCH', `/api/ordres/${ordre.id}`, { status: 'pris' });
       await asPilot(ctx, 'PATCH', `/api/ordres/${ordre.id}`, { status: 'fait', result: 'Transmis à la session' });
     }
-    expect((await asUser(ctx, answer('1039-critere-reprise', 'taux'))).status).toBe(409);
+    const response = await asUser(ctx, answer('1039-critere-reprise', 'taux'));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'deja_repondue',
+      answer: { status: 'fait', optionId: 'trois-verts', result: 'Transmis à la session' },
+    });
     await created(await asUser(ctx, answer('test-android', 'fait')));
   });
 

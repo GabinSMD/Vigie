@@ -66,7 +66,7 @@ Contrôles, dans l'ordre du § 4.2 :
 1. identité Access d'une personne : sinon 401 (403 pour un jeton de service) ;
 2. corps lisible (400), `type` dans la liste fermée (422 `type_inconnu`), décision connue du Worker pour ce projet (relue comme `GET /api/decisions`, 404 `decision_inconnue`), `optionId` parmi ses options (422 `option_inconnue`), texte présent si `freeText: obligatoire` (422 `texte_manquant`), absent si `non` (422 `texte_interdit`) ;
 3. texte de 2000 caractères au plus (422 `texte_trop_long`), filtre `looksLikeSecret` (422 `secret`, avec le message de l'écran) ;
-4. une seule réponse active : remplace l'ordre `en_attente`, 409 `deja_transmise` après `pris`, 409 `deja_repondue` après `fait` (sauf `kind: action`, où « Pas encore » ne clôt pas la décision) ;
+4. une seule réponse active : remplace l'ordre `en_attente`, 409 `deja_transmise` après `pris`, 409 `deja_repondue` après `fait` (sauf `kind: action`, où « Pas encore » ne clôt pas la décision). Le corps du 409 porte la réponse qui bloque (`answer`, au format `DecisionAnswer`) : l'app l'affiche « Envoyée » (non modifiable) ou « Répondu », et non « Refusée », car elle n'est pas perdue ;
 5. écriture de l'ordre et du journal dans une seule transaction D1.
 
 `id`, `by`, `createdAt`, `expiresAt`, `target`, `question` et `optionLabel` sont fixés par le Worker ; ce que la requête envoie d'autre est ignoré. Réponse **201** : `{ "ordre": Ordre }`.

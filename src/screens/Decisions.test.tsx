@@ -534,9 +534,9 @@ describe('Décisions en données réelles', () => {
     expect(await within(card('Quel nom pour la page ?')).findByText(/Ton choix/)).toHaveTextContent('Ton choix : Tableau');
   });
 
-  it('refus du Worker (409) : « Refusée » avec sa raison, puis « Répondre à nouveau »', async () => {
+  it('refus du Worker (404) : « Refusée » avec sa raison, puis « Répondre à nouveau »', async () => {
     const user = userEvent.setup();
-    stubApi(() => reply(409, { error: 'deja_transmise', message: 'Déjà transmise : le pilote a pris ta réponse.' }));
+    stubApi(() => reply(404, { error: 'decision_inconnue', message: 'Décision introuvable : elle a peut-être été retirée ou close entre-temps.' }));
     renderLive(decisions);
     const c = card('Quel nom pour la page ?');
     await user.click(within(c).getAllByRole('radio')[1]!);
@@ -544,9 +544,71 @@ describe('Décisions en données réelles', () => {
     await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
     const after = await screen.findByText('Refusée');
     const refused = after.closest('article') as HTMLElement;
-    expect(refused).toHaveTextContent('Déjà transmise : le pilote a pris ta réponse.');
+    expect(refused).toHaveTextContent('Décision introuvable');
     expect(refused).not.toHaveTextContent('Texte qui ne sera pas gardé');
     expect(within(refused).getByRole('button', { name: 'Répondre à nouveau' })).toBeEnabled();
+  });
+
+  const pending = { id: 'ord_A', status: 'en_attente' as const, optionId: 'b', text: 'Plus parlant.', createdAt: '2026-11-24T14:00:00Z', expiresAt: '2026-11-24T17:00:00Z' };
+
+  it('« Modifier » après le passage du pilote (409 « Déjà transmise ») : la réponse prise s’affiche, pas « Refusée »', async () => {
+    const user = userEvent.setup();
+    stubApi(() =>
+      reply(409, { error: 'deja_transmise', message: 'Déjà transmise : le pilote a pris ta réponse.', answer: { ...pending, status: 'pris' } }),
+    );
+    renderLive({ ...decisions, decisions: [{ ...decision, answer: pending }] });
+    await user.click(within(card('Quel nom pour la page ?')).getByRole('button', { name: 'Modifier' }));
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getByRole('radio', { name: /Tableau/ }));
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+
+    expect(await screen.findByText('Déjà transmise : le pilote a pris ta réponse.')).toBeInTheDocument();
+    const after = card('Quel nom pour la page ?');
+    expect(within(after).getByText('Envoyée')).toBeInTheDocument();
+    expect(within(after).queryByText('Refusée')).not.toBeInTheDocument();
+    expect(after).toHaveTextContent('Ton choix : Tour de contrôle');
+    expect(after).toHaveTextContent('Le pilote est en train de la transmettre.');
+    expect(within(after).queryByRole('button', { name: /Modifier|Répondre à nouveau/ })).not.toBeInTheDocument();
+  });
+
+  it('409 « Déjà répondue » : la carte passe à « Répondu » et quitte la liste, pas « Refusée »', async () => {
+    const user = userEvent.setup();
+    stubApi(() =>
+      reply(409, {
+        error: 'deja_repondue',
+        message: 'Déjà répondue : le pilote a transmis une réponse.',
+        answer: { ...pending, status: 'fait', doneAt: '2026-11-24T14:05:00Z', result: 'Transmis à la session' },
+      }),
+    );
+    renderLive(decisions);
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getAllByRole('radio')[0]!);
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+    expect(await screen.findByText('Déjà répondue : le pilote a transmis une réponse.')).toBeInTheDocument();
+    /* Répondue, elle n'attend plus rien de toi (une carte « Refusée » resterait en attente avec « Répondre à nouveau »). */
+    expect(screen.queryByText('Refusée')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Répondre à nouveau' })).not.toBeInTheDocument();
+    expect(screen.getByText("Rien n'attend ta décision")).toBeInTheDocument();
+  });
+
+  it('« Modifier » refusé (422) : la réponse envoyée avant reste valable et affichée, avec la raison', async () => {
+    const user = userEvent.setup();
+    stubApi(() => reply(422, { error: 'option_inconnue', message: 'Option inconnue : la question a changé, réponds à nouveau.' }));
+    renderLive({ ...decisions, decisions: [{ ...decision, answer: pending }] });
+    await user.click(within(card('Quel nom pour la page ?')).getByRole('button', { name: 'Modifier' }));
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getByRole('radio', { name: /Tableau/ }));
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+
+    expect(await within(c).findByRole('alert')).toHaveTextContent(
+      'Option inconnue : la question a changé, réponds à nouveau. Ta réponse envoyée avant reste valable.',
+    );
+    expect(within(c).queryByText('Refusée')).not.toBeInTheDocument();
+    await user.click(within(c).getByRole('button', { name: 'Garder la réponse envoyée' }));
+    const after = card('Quel nom pour la page ?');
+    expect(within(after).getByText('Envoyée')).toBeInTheDocument();
+    expect(after).toHaveTextContent('Ton choix : Tour de contrôle');
+    expect(within(after).getByRole('button', { name: 'Modifier' })).toBeEnabled();
   });
 
   it.each([
