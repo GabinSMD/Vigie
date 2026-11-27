@@ -235,8 +235,28 @@ function sessionDecisions(snapshot: SessionSnapshot, log: Log): Decision[] {
         );
       }
     }
+    for (const raw of Array.isArray(s.deliverables) ? (s.deliverables as unknown[]) : []) {
+      const d = deliverableDecision(raw, s.projectId, s.id, snapshot.generatedAt);
+      if (d) out.push(d);
+      else log(`decisions: ${where} : livrable illisible, ignoré`);
+    }
   }
   return out;
+}
+
+/**
+ * Livrable de l'instantané (§ 2.3) : une décision `validation` en oui/non (« Valider » / « Faire reprendre »),
+ * comme dans l'app. Il passe par le Worker pour qu'on puisse y répondre par un ordre `repondre`.
+ */
+function deliverableDecision(raw: unknown, projectId: string, sessionId: string, askedAt: string): Decision | null {
+  const d = (raw ?? {}) as Record<string, unknown>;
+  if (typeof d.id !== 'string' || !ID_FORMAT.test(d.id) || typeof d.title !== 'string') return null;
+  const title = d.title.trim();
+  if (!title || [...title].length > 140 || /[\r\n]/.test(title) || looksLikeSecret(`${d.id}\n${title}`)) return null;
+  return toDecision(
+    { id: d.id, kind: 'validation', question: title, context: [], options: [], reversible: true, topic: 'produit', freeText: 'non', blocking: false, links: [] },
+    { projectId, askedAt, askedBy: { kind: 'session', id: sessionId }, source: 'session' },
+  );
 }
 
 /* --- Déduplication (§ 5.3) --- */

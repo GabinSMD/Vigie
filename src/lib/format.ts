@@ -74,6 +74,3 @@ export function nextPilotPassFr(iso: string): string {
   if (hour >= 21) return 'demain vers 8 h';
   return `vers ${hour + 1} h`;
 }
-
-/** Heure d'expiration d'un ordre `repondre` (D10 : 3 h après l'envoi), heure de Paris. */
-export const expiryFr = (createdAt: string) => clockFr(new Date(new Date(createdAt).getTime() + 3 * 3_600_000).toISOString());

@@ -5,9 +5,9 @@ import { DecisionCard } from '../components/DecisionCard';
 import { Icon } from '../components/Icon';
 import { LaunchedList } from '../components/LaunchedRow';
 import { ActionButton } from '../components/ActionButton';
-import { answeredWithin, decisionView, isDecision, needsYou, sortDecisionItems, type DecisionItem } from '../data/decisionState';
+import { answeredWithin, isDecision, needsYou, sortDecisionItems, type DecisionItem } from '../data/decisionState';
 import { useData } from '../data/source';
-import { pendingItems, useStore, type Launched } from '../data/store';
+import { pendingItems, useStore, viewOf, type Launched } from '../data/store';
 import type { ActionItem } from '../data/types';
 import { clockFr, plural } from '../lib/format';
 import { ConsigneSheet } from '../sheets/ConsigneSheet';
@@ -43,7 +43,7 @@ export function Accueil() {
 
   /* « En attente de ta réponse » (§ 3.1) : à trancher d'abord, puis envoyées, puis répondues depuis moins de 24 h, repliées. */
   const allDecisions = actionItems.filter(isDecision).filter((i) => !failing || i.projectId !== 'treizero');
-  const phaseOf = (i: DecisionItem) => decisionView(i.decision, state.answers[i.id]);
+  const phaseOf = (i: DecisionItem) => viewOf(state, i);
   const waiting = sortDecisionItems(allDecisions.filter((i) => needsYou(phaseOf(i).phase)));
   const sent = sortDecisionItems(allDecisions.filter((i) => phaseOf(i).phase === 'envoyee'));
   const answered = sortDecisionItems(allDecisions.filter((i) => answeredWithin(phaseOf(i), 24)));

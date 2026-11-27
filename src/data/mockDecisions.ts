@@ -1,4 +1,5 @@
 import type { Decision, DecisionAnswer } from './api';
+import { orderExpiresAt } from './ordre';
 import { IMPLICIT_OPTIONS } from './decision';
 
 /*
@@ -13,7 +14,7 @@ const MIN = 60_000;
 const ago = (minutes: number, now = Date.now()) => new Date(now - minutes * MIN).toISOString();
 const yesNo = () => IMPLICIT_OPTIONS.map((o) => ({ ...o }));
 
-type Base = Omit<Decision, 'askedAt' | 'answer'> & { askedMinutesAgo: number; answer?: Omit<DecisionAnswer, 'createdAt' | 'doneAt'> & { createdMinutesAgo: number; doneMinutesAgo?: number } };
+type Base = Omit<Decision, 'askedAt' | 'answer'> & { askedMinutesAgo: number; answer?: Omit<DecisionAnswer, 'createdAt' | 'expiresAt' | 'doneAt'> & { createdMinutesAgo: number; doneMinutesAgo?: number } };
 
 const base: Base[] = [
   {
@@ -281,6 +282,7 @@ export function mockDecisions(now = Date.now()): Decision[] {
       decision.answer = {
         ...rest,
         createdAt: ago(createdMinutesAgo, now),
+        expiresAt: orderExpiresAt(new Date(ago(createdMinutesAgo, now))).toISOString(),
         ...(doneMinutesAgo !== undefined ? { doneAt: ago(doneMinutesAgo, now) } : {}),
       };
     }

@@ -13,16 +13,21 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import {
   STEPS,
+  PILOT_SERVICE_TOKEN,
+  PLACEHOLDER_D1_ID,
   PLACEHOLDER_KV_ID,
   accessAppBody,
   accessAppUpToDate,
   accessVerdict,
+  appEmail,
   appJwt,
+  appServiceTokenId,
   buildManifest,
   checkDomain,
   compareRepos,
   defaultZone,
   findAccessApp,
+  findD1Database,
   findKvNamespace,
   installationSettingsUrl,
   installationsSecret,
@@ -30,15 +35,20 @@ import {
   isLoggedOut,
   manifestPage,
   matchInstallations,
+  newPilotToken,
   newState,
   parseArgs,
   parseJsonArray,
   parseWhoamiAccounts,
+  readD1Id,
   readDomain,
   readKvId,
+  readVar,
   sameState,
+  setD1Id,
   setDomain,
   setKvId,
+  setVar,
   toPkcs8,
 } from './mise-en-route/lib.mjs';
 
@@ -49,6 +59,8 @@ const SETUP = join(ROOT, '.vigie-setup');
 const STATE_FILE = join(SETUP, 'etat.json');
 const PEM_PKCS1 = join(SETUP, 'github-app.pem');
 const PEM_PKCS8 = join(SETUP, 'github-app-pkcs8.pem');
+/** Identifiants du pilote (jeton de service Access + PILOT_TOKEN), affichés une fois au nettoyage. */
+const PILOT_FILE = join(SETUP, 'pilote.json');
 const WORKER_NAME = 'vigie-api';
 const GH = 'https://api.github.com';
 const CF = 'https://api.cloudflare.com/client/v4';
@@ -454,13 +466,13 @@ async function stepInstallations(state) {
   ok(`Dépôts conformes à config/projets.json. GITHUB_INSTALLATIONS = ${state.installations}`);
 }
 
-async function stepCloudflare(state) {
+/** Connexion à Cloudflare (wrangler) et choix du compte. */
+async function cloudflareLogin(state) {
   if (!existsSync(join(WORKER, 'node_modules', 'wrangler'))) {
     await act('npm ci dans worker/ (installe wrangler)', () => run('npm', ['ci'], { cwd: WORKER }));
   }
   if (DRY) {
     say(`  ${dim('[simulation]')} npx wrangler whoami (sinon npx wrangler login)`);
-    say(`  ${dim('[simulation]')} npx wrangler kv namespace list, puis kv namespace create VIGIE_SNAPSHOT s'il n'existe pas`);
   } else {
     let who = await wrangler(['whoami'], { capture: true, allowFail: true });
     if (who.code !== 0 || isLoggedOut(who.out)) {
@@ -481,6 +493,11 @@ async function stepCloudflare(state) {
     }
     ok(`Connecté à Cloudflare (compte ${accounts.find((a) => a.id === state.accountId)?.name ?? state.accountId}).`);
   }
+}
+
+async function stepCloudflare(state) {
+  await cloudflareLogin(state);
+  if (DRY) say(`  ${dim('[simulation]')} npx wrangler kv namespace list, puis kv namespace create VIGIE_SNAPSHOT s'il n'existe pas`);
 
   const env = state.accountId ? { CLOUDFLARE_ACCOUNT_ID: state.accountId } : {};
   let kvId = state.kvId;
@@ -508,35 +525,123 @@ async function stepCloudflare(state) {
   else await act(`worker/wrangler.toml : id du KV et domaine ${state.host} (zone ${state.zone})`, () => writeFile(TOML, next));
 }
 
+/** Jeton API Cloudflare, demandé une seule fois par exécution et gardé en mémoire seulement. */
+async function askCfToken(rights) {
+  if (cfToken) return;
+  say(`  Il faut un jeton API Cloudflare avec ${rights} sur ton compte`);
+  say('  (Mon profil → Jetons API → Créer un jeton → Personnalisé ; durée courte ; à révoquer après). Voir docs/mise-en-route.md.');
+  openBrowser('https://dash.cloudflare.com/profile/api-tokens');
+  cfToken = await askHidden('Colle le jeton (il ne s\'affiche pas) :');
+  if (!cfToken) throw new Stop('Aucun jeton saisi.');
+}
+
+const CF_RIGHTS =
+  'les droits « Access: Apps and Policies : Edit », « Access: Service Tokens : Edit » et « Access: Organizations, Identity Providers, and Groups : Read »';
+
 async function stepAccess(state) {
   if (state.accessDone && !options.from) {
     ok(`Cloudflare Access déjà en place sur ${state.host}.`);
     return;
   }
-  const body = accessAppBody({ host: state.host, email: state.email });
   if (DRY) {
     say(`  ${dim('[simulation]')} demander un jeton API Cloudflare (saisie masquée, gardé en mémoire seulement)`);
     say(`  ${dim('[simulation]')} GET ${CF}/accounts/<compte>/access/apps, puis POST (création) ou PUT (mise à jour) avec :`);
-    say(dim(JSON.stringify(body, null, 2).replace(/^/gm, '    ')));
+    say(dim(JSON.stringify(accessAppBody({ host: state.host, email: state.email }), null, 2).replace(/^/gm, '    ')));
+    say(`  ${dim('[simulation]')} (la règle du jeton de service du pilote, posée par l'étape « ordres », est gardée)`);
     return;
   }
-  say('  Il faut un jeton API Cloudflare avec le droit « Access: Apps and Policies : Edit » sur ton compte');
-  say('  (Mon profil → Jetons API → Créer un jeton → Personnalisé ; durée courte ; à révoquer après). Voir docs/mise-en-route.md.');
-  openBrowser('https://dash.cloudflare.com/profile/api-tokens');
-  cfToken = await askHidden('Colle le jeton (il ne s\'affiche pas) :');
-  if (!cfToken) throw new Stop('Aucun jeton saisi.');
-
+  await askCfToken(CF_RIGHTS);
   const apps = await cloudflare(`/accounts/${state.accountId}/access/apps`);
   const existing = findAccessApp(apps ?? [], state.host);
-  if (existing && accessAppUpToDate(existing, state)) ok(`Application Access « ${existing.name} » déjà conforme.`);
+  // Une relance de cette étape garde la règle du pilote posée par l'étape « ordres ».
+  const wanted = { host: state.host, email: state.email, serviceTokenId: state.serviceTokenId ?? appServiceTokenId(existing) ?? undefined };
+  const body = accessAppBody(wanted);
+  if (existing && accessAppUpToDate(existing, wanted)) ok(`Application Access « ${existing.name} » déjà conforme.`);
   else if (existing)
     await act(`mise à jour de l'application Access « ${existing.name} » sur ${state.host}`, () =>
       cloudflare(`/accounts/${state.accountId}/access/apps/${existing.id}`, { method: 'PUT', body }),
     );
   else await act(`création de l'application Access sur ${state.host}`, () => cloudflare(`/accounts/${state.accountId}/access/apps`, { method: 'POST', body }));
-  cfToken = null;
   state.accessDone = true;
   ok(`Access protège tout ${state.host} : seule ${state.email} peut entrer.`);
+}
+
+/**
+ * File des ordres (docs/api-ordres.md) : base D1 et ses tables, jeton de service Access du pilote,
+ * variables ACCESS_TEAM_DOMAIN et ACCESS_AUD. Peut se lancer seule sur un Vigie déjà en place :
+ * `npm run mise-en-route -- --from ordres`.
+ */
+async function stepOrdres(state) {
+  await cloudflareLogin(state);
+  const env = state.accountId ? { CLOUDFLARE_ACCOUNT_ID: state.accountId } : {};
+  const toml = await readFile(TOML, 'utf8');
+  state.host ??= readDomain(toml)?.host;
+  if (!state.host || state.host === 'vigie.example.org') throw new Stop('Domaine de Vigie inconnu : reprends avec --from questions.');
+
+  // 1. Base D1 « vigie » et wrangler.toml.
+  let dbId = readD1Id(toml);
+  if (DRY) {
+    say(`  ${dim('[simulation]')} npx wrangler d1 list --json, puis d1 create vigie si elle n'existe pas`);
+    say(`  ${dim('[simulation]')} worker/wrangler.toml : database_id de VIGIE_DB`);
+    say(`  ${dim('[simulation]')} npx wrangler d1 migrations apply vigie --remote (tables ordres et journal)`);
+  } else {
+    let found = findD1Database(parseJsonArray((await wrangler(['d1', 'list', '--json'], { capture: true, env })).out));
+    if (found) ok(`Base D1 « vigie » déjà là (${found.uuid}).`);
+    else {
+      await act('npx wrangler d1 create vigie', () => wrangler(['d1', 'create', 'vigie'], { env }));
+      found = findD1Database(parseJsonArray((await wrangler(['d1', 'list', '--json'], { capture: true, env })).out));
+      if (!found) throw new Stop('Base D1 créée mais introuvable dans la liste.');
+      ok(`Base D1 « vigie » créée (${found.uuid}).`);
+    }
+    dbId = found.uuid;
+    if (readD1Id(toml) !== dbId) await act('worker/wrangler.toml : database_id de VIGIE_DB', () => writeFile(TOML, setD1Id(toml, dbId)));
+    // CI=1 : wrangler applique sans poser de question ; les migrations déjà passées sont sautées.
+    await act('npx wrangler d1 migrations apply vigie --remote', () => wrangler(['d1', 'migrations', 'apply', 'vigie', '--remote'], { env: { ...env, CI: '1' } }));
+  }
+  if (!DRY && (!dbId || dbId === PLACEHOLDER_D1_ID)) throw new Stop('Identifiant de la base D1 manquant.');
+
+  // 2. Jeton de service du pilote, règle « Service Auth » sur l'application, variables Access.
+  if (DRY) {
+    say(`  ${dim('[simulation]')} GET ${CF}/accounts/<compte>/access/service_tokens, puis POST « ${PILOT_SERVICE_TOKEN} » s'il n'existe pas`);
+    say(`  ${dim('[simulation]')} PUT de l'application Access : règle « Service Auth » pour ce jeton, en plus de ton adresse`);
+    say(`  ${dim('[simulation]')} GET ${CF}/accounts/<compte>/access/organizations (domaine de l'équipe) et aud de l'application`);
+    say(`  ${dim('[simulation]')} worker/wrangler.toml : [vars] ACCESS_TEAM_DOMAIN et ACCESS_AUD`);
+    return;
+  }
+  await askCfToken(CF_RIGHTS);
+  const tokens = (await cloudflare(`/accounts/${state.accountId}/access/service_tokens`)) ?? [];
+  let token = tokens.find((t) => t.name === PILOT_SERVICE_TOKEN);
+  if (token) ok(`Jeton de service « ${PILOT_SERVICE_TOKEN} » déjà là (son secret n'est plus lisible ; supprime-le dans Zero Trust pour en recréer un).`);
+  else {
+    token = await act(`création du jeton de service « ${PILOT_SERVICE_TOKEN} » (valable 1 an)`, () =>
+      cloudflare(`/accounts/${state.accountId}/access/service_tokens`, { method: 'POST', body: { name: PILOT_SERVICE_TOKEN, duration: '8760h' } }),
+    );
+    // Le secret n'est rendu qu'à la création : gardé en 0600 pour l'afficher une fois au nettoyage.
+    await writePrivate(PILOT_FILE, `${JSON.stringify({ clientId: token.client_id, clientSecret: token.client_secret }, null, 2)}\n`);
+    ok(`Jeton de service créé (Client ID ${token.client_id}). Son secret sera affiché une fois à la fin.`);
+  }
+  state.serviceTokenId = token.id;
+
+  const apps = await cloudflare(`/accounts/${state.accountId}/access/apps`);
+  let app = findAccessApp(apps ?? [], state.host);
+  if (!app) throw new Stop(`Aucune application Access sur ${state.host} : reprends avec --from access.`);
+  state.email ??= appEmail(app);
+  if (!state.email) throw new Stop('Adresse autorisée introuvable dans l\'application Access : reprends avec --from questions.');
+  const wanted = { host: state.host, email: state.email, serviceTokenId: token.id };
+  if (accessAppUpToDate(app, wanted)) ok('Application Access déjà ouverte au pilote.');
+  else
+    app = await act('application Access : règle « Service Auth » pour le jeton du pilote', () =>
+      cloudflare(`/accounts/${state.accountId}/access/apps/${app.id}`, { method: 'PUT', body: accessAppBody(wanted) }),
+    );
+  state.accessDone = true;
+
+  const org = await cloudflare(`/accounts/${state.accountId}/access/organizations`);
+  if (!org?.auth_domain || !app?.aud) throw new Stop('Domaine de l\'équipe Access ou aud de l\'application introuvable.');
+  const current = await readFile(TOML, 'utf8');
+  const next = setVar(setVar(current, 'ACCESS_TEAM_DOMAIN', org.auth_domain), 'ACCESS_AUD', app.aud);
+  if (next === current) ok('worker/wrangler.toml : variables Access déjà à jour.');
+  else await act(`worker/wrangler.toml : ACCESS_TEAM_DOMAIN = ${org.auth_domain}, ACCESS_AUD`, () => writeFile(TOML, next));
+  if (readVar(next, 'ACCESS_AUD') !== app.aud) throw new Stop('ACCESS_AUD non écrit.');
 }
 
 async function stepDeploy(state) {
@@ -563,6 +668,13 @@ async function stepSecrets(state) {
     GITHUB_APP_ID: async () => String(state.appId),
     GITHUB_APP_PRIVATE_KEY: async () => readFile(PEM_PKCS8, 'utf8'),
     GITHUB_INSTALLATIONS: async () => state.installations,
+    // Généré ici, jamais écrit dans le dépôt ; la même valeur va dans les secrets du pilote (affichée au nettoyage).
+    PILOT_TOKEN: async () => {
+      const token = newPilotToken();
+      const pilot = existsSync(PILOT_FILE) ? JSON.parse(await readFile(PILOT_FILE, 'utf8')) : {};
+      await writePrivate(PILOT_FILE, `${JSON.stringify({ ...pilot, pilotToken: token }, null, 2)}\n`);
+      return token;
+    },
   };
   for (const [name, value] of Object.entries(values)) {
     if (present.includes(name) && options.from !== 'secrets') {
@@ -605,6 +717,17 @@ async function stepVerify(state) {
 }
 
 async function stepCleanup(state) {
+  cfToken = null;
+  if (existsSync(PILOT_FILE) && interactive && !DRY) {
+    say('  Le pilote a besoin de ses identifiants (secrets de l\'environnement du pilote, jamais dans un dépôt) :');
+    say('  CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (jeton de service Access) et VIGIE_PILOT_TOKEN. Voir docs/api-ordres.md.');
+    const answer = await ask('Tape « afficher » pour les afficher une seule fois, ou Entrée pour passer :');
+    if (answer === 'afficher') {
+      say(await readFile(PILOT_FILE, 'utf8'));
+      await pause('Appuie sur Entrée une fois les valeurs rangées : l\'écran sera effacé.');
+      process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
+    }
+  }
   if (existsSync(PEM_PKCS8) && interactive && !DRY) {
     say('  Si tu veux garder la clé privée, range-la dans ton gestionnaire de mots de passe.');
     say('  (Sinon, tu pourras en générer une nouvelle sur la page de l\'App, à tout moment.)');
@@ -631,6 +754,7 @@ const RUNNERS = {
   installations: stepInstallations,
   cloudflare: stepCloudflare,
   access: stepAccess,
+  ordres: stepOrdres,
   deploiement: stepDeploy,
   secrets: stepSecrets,
   verification: stepVerify,

@@ -56,13 +56,22 @@ describe('état (§ 3.3)', () => {
     ['expire', 'expiree', false],
     ['refuse', 'refusee', false],
   ] as const)('ordre %s → %s', (status, phase, editable) => {
-    const d = status ? { ...base, answer: { status, optionId: 'oui', createdAt: base.askedAt } } : base;
+    const d = status ? { ...base, answer: { status, optionId: 'oui', createdAt: base.askedAt, expiresAt: base.askedAt } } : base;
     expect(decisionView(d)).toMatchObject({ phase, editable });
   });
 
   it('une réponse locale passe avant l’ordre connu', () => {
-    const d = { ...base, answer: { status: 'expire' as const, optionId: 'oui', createdAt: base.askedAt } };
-    expect(decisionView(d, { optionId: 'non', at: '2026-11-24T15:00:00Z' })).toMatchObject({ phase: 'envoyee', answer: { optionId: 'non' } });
+    const d = { ...base, answer: { status: 'expire' as const, optionId: 'oui', createdAt: base.askedAt, expiresAt: base.askedAt } };
+    expect(decisionView(d, { optionId: 'non', at: '2026-11-24T15:00:00Z' })).toMatchObject({
+      phase: 'envoyee',
+      answer: { optionId: 'non', expiresAt: '2026-11-24T18:00:00.000Z' },
+    });
+  });
+
+  it('l’ordre renvoyé par le Worker pendant la visite passe avant celui du chargement', () => {
+    const d = { ...base, answer: { status: 'expire' as const, optionId: 'oui', createdAt: base.askedAt, expiresAt: base.askedAt } };
+    const sent = { id: 'ord_X', status: 'en_attente' as const, optionId: 'non', createdAt: '2026-11-24T15:00:00Z', expiresAt: '2026-11-24T18:00:00Z' };
+    expect(decisionView(d, undefined, sent)).toMatchObject({ phase: 'envoyee', editable: true, answer: { optionId: 'non' } });
   });
 
   it('attendent encore toi : en attente, expirée, refusée', () => {

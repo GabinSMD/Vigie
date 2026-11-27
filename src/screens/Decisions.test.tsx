@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { HashRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 import { App, Shell } from '../App';
-import type { Decision, DecisionsResponse, ProjetsResponse, SessionsResponse } from '../data/api';
+import type { Decision, DecisionsResponse, Ordre, ProjetsResponse, SessionsResponse } from '../data/api';
 import { buildLiveData } from '../data/live';
 import { DataSetProvider } from '../data/source';
 import { StoreProvider } from '../data/store';
@@ -424,12 +424,28 @@ const decision: Decision = {
   askedBy: { kind: 'issue', number: 5 },
   source: 'issue',
 };
+/** Oui/non sans texte et réversible : un tap (D13). */
+const yesNo: Decision = {
+  ...decision,
+  id: '7-garder-theme',
+  question: 'On garde le thème sombre ?',
+  context: ['La PR #7 attend.'],
+  options: [
+    { id: 'oui', label: 'Oui' },
+    { id: 'non', label: 'Non' },
+  ],
+  recommended: undefined,
+  freeText: 'non',
+  links: [],
+  askedAt: '2026-11-24T13:00:00Z',
+};
 const decisions: DecisionsResponse = { generatedAt: NOW.toISOString(), snapshotAt: sessions.snapshotAt, decisions: [decision], errors: [] };
+const API = 'https://vigie.example.org/';
 
-function renderLive(decisionsResponse: DecisionsResponse | null) {
+function renderLive(decisionsResponse: DecisionsResponse | null, apiUrl: string | undefined = API) {
   go('#/');
   return render(
-    <DataSetProvider value={buildLiveData(projets, sessions, NOW, decisionsResponse)}>
+    <DataSetProvider value={{ ...buildLiveData(projets, sessions, NOW, decisionsResponse), apiUrl }}>
       <StoreProvider>
         <HashRouter>
           <Shell />
@@ -439,19 +455,166 @@ function renderLive(decisionsResponse: DecisionsResponse | null) {
   );
 }
 
+const ordre = (body: { decisionId: string; optionId: string; text?: string }, over: Partial<Ordre> = {}): Ordre => ({
+  id: 'ord_01JDZ3K6V8Q2ABCDEFGHJKMN',
+  type: 'repondre',
+  createdAt: '2026-11-24T14:11:00Z',
+  expiresAt: '2026-11-24T17:11:00Z',
+  by: 'gabin@example.org',
+  projectId: 'vigie',
+  decisionId: body.decisionId,
+  question: 'Q',
+  target: { kind: 'issue', number: 5 },
+  optionId: body.optionId,
+  optionLabel: body.optionId,
+  ...(body.text ? { text: body.text } : {}),
+  status: 'en_attente',
+  ...over,
+});
+
+const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+/** `POST /api/ordres` simulé : garde les corps envoyés, répond 201 sauf si `answer` dit autre chose. */
+function stubApi(answer?: (body: Record<string, string>) => Response | Promise<Response>) {
+  const sent: Record<string, string>[] = [];
+  const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    expect(input).toBe('https://vigie.example.org/api/ordres');
+    expect(init).toMatchObject({ method: 'POST', credentials: 'include', redirect: 'manual' });
+    const body = JSON.parse(String(init?.body)) as Record<string, string>;
+    sent.push(body);
+    return answer ? answer(body) : reply(201, { ordre: ordre(body as never) });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { sent, fetchMock };
+}
+
 describe('Décisions en données réelles', () => {
-  it('lit /api/decisions : carte complète, envoi encore indisponible et expliqué', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('lit /api/decisions : carte complète, et « Envoyer » dépose l’ordre (plus de « Bientôt »)', async () => {
+    const user = userEvent.setup();
+    const { sent } = stubApi();
     renderLive(decisions);
     const c = card('Quel nom pour la page ?');
     expect(c).toHaveTextContent('Vigie · Décision');
     expect(within(c).getAllByRole('radio')[0]).toHaveTextContent('Tour de contrôleRecommandé');
-    const send = within(c).getByRole('button', { name: /Envoyer/ });
-    expect(send).toBeDisabled();
-    expect(send).toHaveTextContent('Bientôt');
-    expect(send).toHaveAccessibleDescription(/réponds sur GitHub/);
     expect(within(c).getByRole('link', { name: 'issue #5 (nouvel onglet)' })).toHaveAttribute('href', 'https://github.com/GabinSMD/Vigie/issues/5');
     /* /api/decisions contient déjà les questions de l'instantané : pas de doublon lu à part. */
     expect(screen.queryByText('Question lue dans l’instantané')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bientôt/, { selector: '.dec *' })).not.toBeInTheDocument();
+
+    await user.click(within(c).getAllByRole('radio')[0]!);
+    await user.type(within(c).getByLabelText('Précision (facultatif)'), 'Plus parlant.');
+    const send = within(c).getByRole('button', { name: 'Envoyer' });
+    expect(send).toBeEnabled();
+    await user.click(send);
+
+    expect(sent).toEqual([{ type: 'repondre', projectId: 'vigie', decisionId: '5-choix-nom', optionId: 'b', text: 'Plus parlant.' }]);
+    expect(await screen.findByText('Réponse envoyée.')).toBeInTheDocument();
+    /* Envoyée : la carte quitte « En attente » et passe dans « Envoyées ». */
+    const after = card('Quel nom pour la page ?');
+    expect(within(after).getByText('Envoyée')).toBeInTheDocument();
+    expect(after).toHaveTextContent('Ton choix : Tour de contrôle');
+    expect(after).toHaveTextContent('Plus parlant.');
+  });
+
+  it('« Modifier » renvoie un nouvel ordre', async () => {
+    const user = userEvent.setup();
+    const { sent } = stubApi();
+    renderLive({ ...decisions, decisions: [{ ...decision, answer: { id: 'ord_A', status: 'en_attente', optionId: 'b', createdAt: '2026-11-24T14:00:00Z', expiresAt: '2026-11-24T17:00:00Z' } }] });
+    await user.click(within(card('Quel nom pour la page ?')).getByRole('button', { name: 'Modifier' }));
+    const c = card('Quel nom pour la page ?');
+    expect(within(c).getByRole('radio', { name: /Tour de contrôle/ })).toHaveAttribute('aria-checked', 'true');
+    await user.click(within(c).getByRole('radio', { name: /Tableau/ }));
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+    expect(sent).toEqual([{ type: 'repondre', projectId: 'vigie', decisionId: '5-choix-nom', optionId: 'a' }]);
+    expect(await within(card('Quel nom pour la page ?')).findByText(/Ton choix/)).toHaveTextContent('Ton choix : Tableau');
+  });
+
+  it('refus du Worker (409) : « Refusée » avec sa raison, puis « Répondre à nouveau »', async () => {
+    const user = userEvent.setup();
+    stubApi(() => reply(409, { error: 'deja_transmise', message: 'Déjà transmise : le pilote a pris ta réponse.' }));
+    renderLive(decisions);
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getAllByRole('radio')[1]!);
+    await user.type(within(c).getByLabelText('Précision (facultatif)'), 'Texte qui ne sera pas gardé');
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+    const after = await screen.findByText('Refusée');
+    const refused = after.closest('article') as HTMLElement;
+    expect(refused).toHaveTextContent('Déjà transmise : le pilote a pris ta réponse.');
+    expect(refused).not.toHaveTextContent('Texte qui ne sera pas gardé');
+    expect(within(refused).getByRole('button', { name: 'Répondre à nouveau' })).toBeEnabled();
+  });
+
+  it.each([
+    ['réseau coupé', () => Promise.reject(new TypeError('Failed to fetch')), "Réseau indisponible : ta réponse n'est pas partie. Réessaie."],
+    ['panne du Worker', () => reply(502, { error: 'decisions_unavailable' }), "Réseau indisponible : ta réponse n'est pas partie. Réessaie."],
+    ['connexion Access expirée', () => reply(401, { error: 'unauthorized' }), 'Ta connexion a expiré : recharge la page pour te reconnecter.'],
+  ])('%s : rien n’est parti, le formulaire reste rempli avec l’erreur', async (_name, answer, message) => {
+    const user = userEvent.setup();
+    stubApi(answer as never);
+    renderLive(decisions);
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getAllByRole('radio')[0]!);
+    await user.type(within(c).getByLabelText('Précision (facultatif)'), 'Mon texte');
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+    expect(await within(c).findByRole('alert')).toHaveTextContent(message);
+    expect(within(c).getByText('Attend toi')).toBeInTheDocument();
+    expect(within(c).getByLabelText('Précision (facultatif)')).toHaveValue('Mon texte');
+    expect(within(c).getByRole('button', { name: 'Envoyer' })).toBeEnabled();
+  });
+
+  it('oui/non en un tap : l’ordre ne part qu’après les 5 s, et jamais si tu annules', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { sent } = stubApi();
+    renderLive({ ...decisions, decisions: [yesNo] });
+
+    await user.click(within(card('On garde le thème sombre ?')).getByRole('button', { name: 'Oui' }));
+    expect(within(card('On garde le thème sombre ?')).getByText('Envoyée')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Annuler' }));
+    act(() => vi.advanceTimersByTime(6000));
+    expect(sent).toEqual([]);
+    expect(within(card('On garde le thème sombre ?')).getByRole('button', { name: 'Oui' })).toBeInTheDocument();
+
+    await user.click(within(card('On garde le thème sombre ?')).getByRole('button', { name: 'Non' }));
+    act(() => vi.advanceTimersByTime(4900));
+    expect(sent).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(sent).toEqual([{ type: 'repondre', projectId: 'vigie', decisionId: '7-garder-theme', optionId: 'non' }]);
+    expect(await within(card('On garde le thème sombre ?')).findByRole('button', { name: 'Modifier' })).toBeInTheDocument();
+  });
+
+  it('oui/non en un tap : si l’envoi échoue après 5 s, la question revient avec un message', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    stubApi(() => Promise.reject(new TypeError('Failed to fetch')));
+    renderLive({ ...decisions, decisions: [yesNo] });
+    await user.click(within(card('On garde le thème sombre ?')).getByRole('button', { name: 'Oui' }));
+    await act(async () => {
+      vi.advanceTimersByTime(5100);
+    });
+    expect(await screen.findByText("Réseau indisponible : ta réponse n'est pas partie. Réessaie.")).toBeInTheDocument();
+    expect(within(card('On garde le thème sombre ?')).getByRole('button', { name: 'Oui' })).toBeInTheDocument();
+  });
+
+  it('expirée : l’heure vient de expiresAt, et « Renvoyer » dépose un nouvel ordre', async () => {
+    const user = userEvent.setup();
+    const { sent } = stubApi();
+    renderLive({
+      ...decisions,
+      decisions: [{ ...decision, answer: { id: 'ord_A', status: 'expire', optionId: 'a', text: 'Bref.', createdAt: '2026-11-23T21:30:00Z', expiresAt: '2026-11-24T08:00:00Z' } }],
+    });
+    const c = card('Quel nom pour la page ?');
+    expect(c).toHaveTextContent("Le pilote ne l'a pas prise avant 09 h 00.");
+    await user.click(within(c).getByRole('button', { name: 'Renvoyer' }));
+    expect(sent).toEqual([{ type: 'repondre', projectId: 'vigie', decisionId: '5-choix-nom', optionId: 'a', text: 'Bref.' }]);
+    expect(await screen.findByText('Réponse renvoyée.')).toBeInTheDocument();
   });
 
   it('sans /api/decisions, les questions de l’instantané restent visibles', () => {

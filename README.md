@@ -33,7 +33,7 @@ npm run build      # vérification des types + build dans dist/
 
 ## Données réelles (étape 1, lecture seule)
 
-Sans configuration, l'app utilise les données fictives. Avec `VITE_API_URL` (`/` en production : le Worker sert l'app et l'API sur le même nom d'hôte), elle lit le Worker (`worker/`) : PR, CI et issues via une GitHub App en lecture seule, sessions via l'instantané que le pilote écrit dans KV. Les actions restent désactivées (« Bientôt »), « Fusionner » ouvre la PR sur GitHub, les coûts sont masqués.
+Sans configuration, l'app utilise les données fictives. Avec `VITE_API_URL` (`/` en production : le Worker sert l'app et l'API sur le même nom d'hôte), elle lit le Worker (`worker/`) : PR, CI et issues via une GitHub App en lecture seule, sessions via l'instantané que le pilote écrit dans KV. Les réponses aux décisions partent vers `POST /api/ordres` (file D1 que le pilote lit, voir [`docs/api-ordres.md`](docs/api-ordres.md)) ; les autres actions restent désactivées (« Bientôt »), « Fusionner » ouvre la PR sur GitHub, les coûts sont masqués.
 
 - Conception : [`docs/conception-donnees-reelles.md`](docs/conception-donnees-reelles.md)
 - Format de l'instantané : [`docs/instantane-sessions.md`](docs/instantane-sessions.md)

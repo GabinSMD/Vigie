@@ -196,6 +196,8 @@ button.li[aria-pressed="true"] { background: var(--accent-soft); box-shadow: ins
 .send { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .send .btn { font-size: 17px; }
 .reason { color: var(--ink); }
+.send-error { display: flex; gap: 8px; margin: 0; font-weight: 700; color: var(--ink); }
+.send-error svg { width: 18px; height: 18px; fill: none; stroke: var(--blocked); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; margin-top: 1px; }
 .quote { border-left: 3px solid var(--border-strong); padding-left: 10px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .answered { display: flex; flex-direction: column; gap: 12px; }
 .answered > summary { min-height: 44px; display: flex; align-items: center; gap: 8px; cursor: pointer; font: 700 16px/20px var(--font-sans); color: var(--accent); list-style: none; }

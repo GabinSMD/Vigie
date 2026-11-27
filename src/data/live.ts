@@ -16,6 +16,8 @@ export interface DataSet {
   snapshotAt: string | null;
   loading: boolean;
   error: string | null;
+  /** Adresse de l'API en données réelles (`/` : même origine) : les réponses partent vers `POST /api/ordres`. */
+  apiUrl?: string;
 }
 
 const prStatus = (pr: ApiPullRequest): { status: Status; label: string; line: string } => {
@@ -176,7 +178,10 @@ export function buildLiveData(
     if (!decisions) {
       for (const q of s.questions ?? []) actionItems.push(toDecisionItem(fromSnapshotQuestion(q, s, askedAt)));
     }
-    for (const d of s.deliverables ?? []) actionItems.push(toDecisionItem(fromDeliverable(d, s, askedAt)));
+    /* /api/decisions contient aussi les livrables : le Worker peut alors recevoir leur réponse. */
+    if (!decisions) {
+      for (const d of s.deliverables ?? []) actionItems.push(toDecisionItem(fromDeliverable(d, s, askedAt)));
+    }
   }
   for (const d of decisions?.decisions ?? []) {
     const item = toDecisionItem(d);
