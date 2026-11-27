@@ -44,3 +44,36 @@ export function clockFr(iso: string): string {
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('hour')} h ${get('minute')}`;
 }
+
+function parisParts(iso: string) {
+  const parts = new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'Europe/Paris',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return { day: get('day'), month: get('month'), hour: Number(get('hour')), minute: get('minute') };
+}
+
+/** « 26/11 à 14 h 05 », heure de Paris. */
+export function dateTimeFr(iso: string): string {
+  const { day, month } = parisParts(iso);
+  return `${day}/${month} à ${clockFr(iso)}`;
+}
+
+/**
+ * Prochain passage du pilote après `iso` (D6 : toutes les heures, de 8 h à 21 h, heure de Paris) :
+ * « vers 15 h », « demain vers 8 h » ou « vers 8 h » avant l'ouverture.
+ */
+export function nextPilotPassFr(iso: string): string {
+  const { hour } = parisParts(iso);
+  if (hour < 8) return 'vers 8 h';
+  if (hour >= 21) return 'demain vers 8 h';
+  return `vers ${hour + 1} h`;
+}
+
+/** Heure d'expiration d'un ordre `repondre` (D10 : 3 h après l'envoi), heure de Paris. */
+export const expiryFr = (createdAt: string) => clockFr(new Date(new Date(createdAt).getTime() + 3 * 3_600_000).toISOString());

@@ -10,7 +10,7 @@ describe('À faire par toi', () => {
   it('liste les décisions en attente, un seul bouton principal', () => {
     const { container } = render(<App />);
     expect(screen.getByRole('heading', { level: 1, name: 'À faire par toi' })).toBeInTheDocument();
-    expect(screen.getByText('5 éléments · 1 bloque un agent')).toBeInTheDocument();
+    expect(screen.getByText('12 éléments · 1 bloque un agent')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Bloque un agent (1)' })).toBeInTheDocument();
     expect(container.querySelectorAll('main .btn.pri')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Voir où poser la clé' })).toHaveClass('pri');
@@ -29,7 +29,7 @@ describe('À faire par toi', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Fusionner #466' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.queryByText('Passer à Node 24')).not.toBeInTheDocument();
-    expect(screen.getByText('4 éléments · 1 bloque un agent')).toBeInTheDocument();
+    expect(screen.getByText('11 éléments · 1 bloque un agent')).toBeInTheDocument();
     expect(screen.getByText('#466 fusionnée.')).toBeInTheDocument();
   });
 

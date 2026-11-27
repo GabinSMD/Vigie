@@ -1,18 +1,32 @@
 import { useEffect } from 'react';
 import { useStore } from '../data/store';
 
+/** Durée du toast ; 5 s quand la réponse peut encore être annulée (D13). */
+const DURATION = 3500;
+const UNDO_DURATION = 5000;
+
 /** Confirmation brève après une décision ; annoncée aux lecteurs d'écran. */
 export function Toast() {
   const { state, dispatch } = useStore();
+  const { toast, undo } = state;
   useEffect(() => {
-    if (!state.toast) return;
-    const timer = window.setTimeout(() => dispatch({ type: 'dismissToast' }), 3500);
+    if (!toast) return;
+    const timer = window.setTimeout(() => dispatch({ type: 'dismissToast' }), undo ? UNDO_DURATION : DURATION);
     return () => window.clearTimeout(timer);
-  }, [state.toast, dispatch]);
+  }, [toast, undo, dispatch]);
 
   return (
     <div role="status" aria-live="polite">
-      {state.toast && <div className="toast">{state.toast}</div>}
+      {toast && (
+        <div className={undo ? 'toast with-undo' : 'toast'}>
+          <span>{toast}</span>
+          {undo && (
+            <button type="button" className="toast-undo" onClick={() => dispatch({ type: 'undoAnswer', itemId: undo })}>
+              Annuler
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { formatCap, formatCost, gauge, plural } from './format';
+import { dateTimeFr, expiryFr, formatCap, formatCost, gauge, nextPilotPassFr, plural } from './format';
 
 describe('format', () => {
   it('écrit les coûts à la française', () => {
@@ -15,5 +15,21 @@ describe('format', () => {
   it('accorde le pluriel', () => {
     expect(plural(1, 'élément')).toBe('1 élément');
     expect(plural(4, 'élément')).toBe('4 éléments');
+  });
+});
+
+describe('dates des décisions (heure de Paris)', () => {
+  it('« 24/11 à 15 h 05 »', () => {
+    expect(dateTimeFr('2026-11-24T14:05:00Z')).toBe('24/11 à 15 h 05');
+  });
+
+  it('prochain passage du pilote, de 8 h à 21 h (D6)', () => {
+    expect(nextPilotPassFr('2026-11-24T13:20:00Z')).toBe('vers 15 h');
+    expect(nextPilotPassFr('2026-11-24T05:00:00Z')).toBe('vers 8 h');
+    expect(nextPilotPassFr('2026-11-24T21:30:00Z')).toBe('demain vers 8 h');
+  });
+
+  it('expiration 3 h après l’envoi (D10)', () => {
+    expect(expiryFr('2026-11-24T13:05:00Z')).toBe('17 h 05');
   });
 });
