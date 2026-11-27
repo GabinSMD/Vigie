@@ -7,9 +7,9 @@ import { CostGauge } from '../components/CostGauge';
 import { LaunchedList } from '../components/LaunchedRow';
 import { StatusPill } from '../components/StatusPill';
 import { ActionButton } from '../components/ActionButton';
-import { answeredWithin, decisionView, isDecision, needsYou, sortDecisionItems, type DecisionItem } from '../data/decisionState';
+import { answeredWithin, isDecision, needsYou, sortDecisionItems, type DecisionItem } from '../data/decisionState';
 import { useData } from '../data/source';
-import { useStore } from '../data/store';
+import { useStore, viewOf } from '../data/store';
 import type { Project } from '../data/types';
 import { formatCost, gauge } from '../lib/format';
 import { MergeSheet } from '../sheets/MergeSheet';
@@ -74,7 +74,7 @@ function SessionsTab({ project }: { project: Project }) {
   const list = sessions.filter((s) => project.sessionIds.includes(s.id));
   const launched = state.launched.filter((l) => l.projectId === project.id);
   const own = actionItems.filter(isDecision).filter((i) => i.projectId === project.id);
-  const phaseOf = (i: DecisionItem) => decisionView(i.decision, state.answers[i.id]);
+  const phaseOf = (i: DecisionItem) => viewOf(state, i);
   const waiting = sortDecisionItems(own.filter((i) => needsYou(phaseOf(i).phase)));
   const sent = sortDecisionItems(own.filter((i) => phaseOf(i).phase === 'envoyee'));
   /* « Répondues récemment » : 7 jours (§ 3.1), la plus récente d'abord. */

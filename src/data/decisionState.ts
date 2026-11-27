@@ -1,10 +1,11 @@
 import type { Decision, DecisionAnswer, DecisionOption, DecisionTopic } from './api';
+import { orderExpiresAt } from './ordre';
 import type { ActionItem } from './types';
 
 /**
- * État affiché d'une décision (docs/specs/en-attente-de-reponse.md § 3.3), à partir de l'ordre
- * connu du Worker (`decision.answer`) et de la réponse donnée dans cette visite (store local).
- * Tant que le lot 4 n'est pas livré, une réponse donnée dans Vigie reste locale.
+ * État affiché d'une décision (docs/specs/en-attente-de-reponse.md § 3.3), à partir, du plus récent au plus ancien :
+ * de la réponse locale de cette visite (données fictives, ou oui/non en un tap pendant ses 5 s d'annulation),
+ * de l'ordre renvoyé par `POST /api/ordres` pendant cette visite, puis de l'ordre connu du Worker (`decision.answer`).
  */
 
 export type DecisionItem = Extract<ActionItem, { kind: 'decision' }>;
@@ -24,7 +25,7 @@ export type DecisionPhase = 'attente' | 'envoyee' | 'repondu' | 'expiree' | 'ref
 export interface DecisionView {
   phase: DecisionPhase;
   /** Réponse affichée (choix, texte, dates) ; absente en attente. */
-  answer?: Pick<DecisionAnswer, 'optionId' | 'text' | 'createdAt' | 'doneAt' | 'result' | 'reason'>;
+  answer?: Pick<DecisionAnswer, 'optionId' | 'text' | 'createdAt' | 'expiresAt' | 'doneAt' | 'result' | 'reason'>;
   /** Envoyée et pas encore prise par le pilote : « Modifier » est possible. */
   editable: boolean;
 }
@@ -38,11 +39,12 @@ export const toDecisionItem = (decision: Decision): DecisionItem => ({
   decision,
 });
 
-export function decisionView(decision: Decision, local?: LocalAnswer): DecisionView {
+export function decisionView(decision: Decision, local?: LocalAnswer, sent?: DecisionAnswer): DecisionView {
   if (local) {
-    return { phase: 'envoyee', answer: { optionId: local.optionId, text: local.text, createdAt: local.at }, editable: true };
+    const expiresAt = orderExpiresAt(new Date(local.at)).toISOString();
+    return { phase: 'envoyee', answer: { optionId: local.optionId, text: local.text, createdAt: local.at, expiresAt }, editable: true };
   }
-  const a = decision.answer;
+  const a = sent ?? decision.answer;
   if (!a) return { phase: 'attente', editable: false };
   switch (a.status) {
     case 'en_attente':

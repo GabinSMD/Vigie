@@ -17,7 +17,14 @@ routes = [
   { pattern = "vigie.gabin-simond.fr", zone_name = "gabin-simond.fr", custom_domain = true }
 ]
 
-# Garde routes, workers_dev, etc. AU-DESSUS de [assets] : en TOML, une clé placée dessous irait dans [assets].
+# Cloudflare Access (variables, pas des secrets) : le Worker vérifie le JWT `Cf-Access-Jwt-Assertion`
+# sur /api/ordres avec les clés de ton équipe Access et l'audience de l'application « Vigie ».
+# À REMPLACER : la mise en route les écrit (étape access). Tant qu'elles sont factices, /api/ordres répond 401.
+[vars]
+ACCESS_TEAM_DOMAIN = "a-remplacer.cloudflareaccess.com"
+ACCESS_AUD = "a-remplacer"
+
+# Garde routes, workers_dev, etc. AU-DESSUS de [vars] et de [assets] : en TOML, une clé placée dessous irait dans [assets].
 # L'app est construite dans ../dist (`npm run build` à la racine, avec VITE_API_URL=/).
 # run_worker_first : chaque requête passe par le Worker, qui garde /api/* et renvoie le reste à ASSETS.
 [assets]
@@ -31,8 +38,18 @@ binding = "VIGIE_SNAPSHOT"
 # À REMPLACER : l'identifiant rendu par `npx wrangler kv namespace create VIGIE_SNAPSHOT`.
 id = "b81d07e1897b44df8ae8d12cd6ce9ba2"
 
+[[d1_databases]]
+binding = "VIGIE_DB"
+database_name = "vigie"
+# À REMPLACER : l'identifiant rendu par `npx wrangler d1 create vigie` (la mise en route le fait).
+database_id = "00000000-0000-0000-0000-000000000000"
+# Tables des ordres et du journal : `npx wrangler d1 migrations apply vigie --remote`.
+migrations_dir = "migrations"
+
 # SECRETS : ne jamais les écrire ici. Pose-les avec `npx wrangler secret put <NOM>` :
 #   GITHUB_APP_ID            identifiant numérique de la GitHub App « Vigie »
 #   GITHUB_APP_PRIVATE_KEY   clé privée de l'App, au format PKCS#8 (voir le guide)
 #   GITHUB_INSTALLATIONS     JSON : {"GabinSMD": 111, "SIMOND-ANCE-BROS": 222, "DentiSync": 333}
 #                            (identifiant d'installation de l'App sur chaque compte)
+#   PILOT_TOKEN              jeton porteur du pilote pour GET et PATCH /api/ordres (32 octets aléatoires ;
+#                            la même valeur va dans les secrets de l'environnement du pilote)

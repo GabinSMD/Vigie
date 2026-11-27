@@ -5,32 +5,41 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   APP_PERMISSIONS,
+  PLACEHOLDER_D1_ID,
   PLACEHOLDER_KV_ID,
   STEPS,
   accessAppBody,
   accessAppUpToDate,
   accessVerdict,
+  appEmail,
   appJwt,
+  appServiceTokenId,
   buildManifest,
   checkDomain,
   compareRepos,
   defaultZone,
   findAccessApp,
+  findD1Database,
   findKvNamespace,
   installationSettingsUrl,
   installationsSecret,
   isLoggedOut,
   manifestPage,
   matchInstallations,
+  newPilotToken,
   newState,
   parseArgs,
   parseJsonArray,
   parseWhoamiAccounts,
+  readD1Id,
   readDomain,
   readKvId,
+  readVar,
   sameState,
+  setD1Id,
   setDomain,
   setKvId,
+  setVar,
   toPkcs8,
 } from './lib.mjs';
 
@@ -39,7 +48,7 @@ const config = JSON.parse(readFileSync(join(ROOT, 'config', 'projets.json'), 'ut
 // Le fichier du dépôt porte la configuration de production après la mise en route :
 // les tests repartent de sa structure réelle, avec les valeurs factices remises.
 const repoToml = readFileSync(join(ROOT, 'worker', 'wrangler.toml'), 'utf8');
-const toml = setDomain(setKvId(repoToml, PLACEHOLDER_KV_ID), 'vigie.example.org', 'example.org');
+const toml = setDomain(setKvId(setD1Id(repoToml, PLACEHOLDER_D1_ID), PLACEHOLDER_KV_ID), 'vigie.example.org', 'example.org');
 
 describe('options', () => {
   it('lit --dry-run et --from (nom ou numéro)', () => {
@@ -56,7 +65,9 @@ describe('options', () => {
 
   it('met Access avant le déploiement', () => {
     const ids = STEPS.map((s) => s.id);
-    expect(ids.indexOf('access')).toBeLessThan(ids.indexOf('deploiement'));
+    expect(ids.indexOf('access')).toBeLessThan(ids.indexOf('ordres'));
+    // La base D1 doit exister avant le déploiement : wrangler refuse un database_id factice.
+    expect(ids.indexOf('ordres')).toBeLessThan(ids.indexOf('deploiement'));
     expect(ids.indexOf('deploiement')).toBeLessThan(ids.indexOf('verification'));
     expect(ids.at(-1)).toBe('nettoyage');
   });
@@ -209,6 +220,23 @@ describe('wrangler.toml', () => {
     expect(readKvId(next)).toBe('abcdef0123456789abcdef0123456789');
   });
 
+  it('base D1 et variables Access : valeurs factices dans le dépôt, remplacées sans toucher au reste', () => {
+    expect(readD1Id(repoToml)).toBe(PLACEHOLDER_D1_ID);
+    expect(readVar(repoToml, 'ACCESS_TEAM_DOMAIN')).toBe('a-remplacer.cloudflareaccess.com');
+    expect(readVar(repoToml, 'ACCESS_AUD')).toBe('a-remplacer');
+    const id = '12345678-90ab-cdef-1234-567890abcdef';
+    const next = setVar(setVar(setD1Id(toml, id), 'ACCESS_TEAM_DOMAIN', 'equipe.cloudflareaccess.com'), 'ACCESS_AUD', 'abc123def');
+    expect(readD1Id(next)).toBe(id);
+    expect(readVar(next, 'ACCESS_TEAM_DOMAIN')).toBe('equipe.cloudflareaccess.com');
+    expect(readVar(next, 'ACCESS_AUD')).toBe('abc123def');
+    expect(readKvId(next)).toBe(PLACEHOLDER_KV_ID);
+    const before = toml.split('\n');
+    expect(next.split('\n').filter((line, i) => line !== before[i])).toHaveLength(3);
+    expect(() => setD1Id(toml, 'pas-un-uuid')).toThrow(/invalide/);
+    expect(() => setVar(toml, 'ACCESS_AUD', 'a"b')).toThrow(/inattendue/);
+    expect(() => setVar(toml, 'INCONNUE', 'x')).toThrow(/introuvable/);
+  });
+
   it('refuse un id invalide ou une section absente', () => {
     expect(() => setKvId(toml, 'pas-un-id')).toThrow(/invalide/);
     expect(() => setKvId('name = "x"', 'abcdef0123456789abcdef0123456789')).toThrow(/introuvable/);
@@ -243,6 +271,18 @@ Getting User settings...
     expect(findKvNamespace([{ id: 'aaa', title: 'autre' }])).toBeNull();
     expect(() => parseJsonArray('rien')).toThrow();
   });
+
+  it('trouve la base D1 de Vigie dans la liste', () => {
+    const list = parseJsonArray('[{"uuid":"aaa","name":"autre"},{"uuid":"bbb","name":"vigie"}]');
+    expect(findD1Database(list)?.uuid).toBe('bbb');
+    expect(findD1Database([{ uuid: 'aaa', name: 'autre' }])).toBeNull();
+  });
+
+  it('génère un PILOT_TOKEN aléatoire de 32 octets', () => {
+    const a = newPilotToken();
+    expect(a).toMatch(/^[\w-]{43}$/);
+    expect(newPilotToken()).not.toBe(a);
+  });
 });
 
 describe('Cloudflare Access', () => {
@@ -266,6 +306,28 @@ describe('Cloudflare Access', () => {
     const ouverte = { ...found, policies: [{ decision: 'allow', include: [{ everyone: {} }] }] };
     expect(accessAppUpToDate(ouverte, input)).toBe(false);
     expect(findAccessApp(apps, 'vigie.ailleurs.fr')).toBeNull();
+  });
+
+  it('ajoute le jeton de service du pilote sans ouvrir l\'application à d\'autres', () => {
+    const body = accessAppBody({ ...input, serviceTokenId: 'tok-1' });
+    expect(body.policies).toHaveLength(2);
+    expect(body.policies[1]).toEqual({
+      name: 'Vigie : pilote (jeton de service)',
+      decision: 'non_identity',
+      include: [{ service_token: { token_id: 'tok-1' } }],
+      precedence: 2,
+    });
+    expect(JSON.stringify(body)).not.toMatch(/everyone|bypass/);
+    const app = { id: 'y', ...body };
+    expect(appServiceTokenId(app)).toBe('tok-1');
+    expect(appEmail(app)).toBe('toi@mondomaine.fr');
+    expect(accessAppUpToDate(app, { ...input, serviceTokenId: 'tok-1' })).toBe(true);
+    expect(accessAppUpToDate(app, { ...input, serviceTokenId: 'tok-2' })).toBe(false);
+    // Sans jeton demandé, une règle en trop n'est pas « à jour » : la relance la remet d'aplomb.
+    expect(accessAppUpToDate(app, input)).toBe(false);
+    const ouverte = { ...app, policies: [...app.policies, { decision: 'non_identity', include: [{ everyone: {} }] }] };
+    expect(accessAppUpToDate(ouverte, { ...input, serviceTokenId: 'tok-1' })).toBe(false);
+    expect(appServiceTokenId({ id: 'z', ...accessAppBody(input) })).toBeNull();
   });
 
   it('juge la réponse de /api/projets sans authentification', () => {

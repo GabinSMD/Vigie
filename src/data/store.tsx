@@ -1,6 +1,7 @@
-import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import { COST_ALERT_THRESHOLD, DAILY_SESSION_CAP, GLOBAL_COST_CAP, SESSIONS_TODAY, actionItems, projects } from './mock';
-import { decisionView, needsYou, type LocalAnswer } from './decisionState';
+import type { DecisionAnswer } from './api';
+import { decisionView, needsYou, type DecisionItem, type DecisionView, type LocalAnswer } from './decisionState';
 import { looksLikeSecret } from './secrets';
 import type { ActionItem } from './types';
 
@@ -48,8 +49,13 @@ export interface Launched {
 export interface DemoState {
   merged: string[];
   consignes: Record<string, string[]>;
-  /** Réponses aux décisions, par id de ligne : locales tant que l'ordre `repondre` (lot 4) n'existe pas. */
+  /**
+   * Réponses aux décisions, par id de ligne, pas encore confirmées par le Worker : toutes en données fictives ;
+   * en données réelles, seulement le oui/non en un tap pendant ses 5 s d'annulation (D13).
+   */
   answers: Record<string, LocalAnswer>;
+  /** Ordres `repondre` renvoyés par le Worker pendant cette visite (créés ou refusés), par id de ligne. */
+  ordres: Record<string, DecisionAnswer>;
   toast: string | null;
   /** Ligne dont la réponse peut encore être annulée depuis le toast (oui/non en un tap, D13). */
   undo: string | null;
@@ -63,6 +69,10 @@ export type DemoAction =
   | { type: 'consigne'; sessionId: string; text: string }
   | { type: 'answer'; itemId: string; optionId: string; text?: string; at?: string; message?: string; undoable?: boolean }
   | { type: 'undoAnswer'; itemId: string }
+  /** Réponse du Worker à `POST /api/ordres` : remplace la réponse locale. */
+  | { type: 'ordre'; itemId: string; answer: DecisionAnswer; message?: string }
+  /** L'envoi n'a pas abouti (réseau, connexion) : la réponse locale est retirée, rien n'est parti. */
+  | { type: 'answerFailed'; itemId: string; message: string }
   | { type: 'notify'; message: string }
   | { type: 'settings'; patch: SettingsPatch }
   | { type: 'projectCap'; projectId: string; cap: number }
@@ -83,6 +93,7 @@ export const initialState: DemoState = {
   merged: [],
   consignes: {},
   answers: {},
+  ordres: {},
   toast: null,
   undo: null,
   settings: initialSettings,
@@ -126,6 +137,19 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
       const { [action.itemId]: _removed, ...rest } = state.answers;
       return { ...state, answers: rest, toast: 'Réponse annulée.', undo: null };
     }
+    case 'ordre': {
+      const { [action.itemId]: _local, ...answers } = state.answers;
+      return {
+        ...state,
+        answers,
+        ordres: { ...state.ordres, [action.itemId]: action.answer },
+        ...(action.message ? { toast: action.message, undo: null } : {}),
+      };
+    }
+    case 'answerFailed': {
+      const { [action.itemId]: _local, ...answers } = state.answers;
+      return { ...state, answers, toast: action.message, undo: null };
+    }
     case 'notify':
       return { ...state, toast: action.message, undo: null };
     case 'dismissToast':
@@ -168,6 +192,10 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
   }
 }
 
+/** État affiché d'une décision, d'après tout ce que l'app sait pendant cette visite. */
+export const viewOf = (state: Pick<DemoState, 'answers' | 'ordres'>, item: DecisionItem): DecisionView =>
+  decisionView(item.decision, state.answers[item.id], state.ordres[item.id]);
+
 /** Une ligne reste dans « À faire par toi » tant que tu n'as pas tranché. */
 export function pendingItems(state: DemoState, items: ActionItem[] = actionItems): ActionItem[] {
   return items.filter((item) => {
@@ -177,7 +205,7 @@ export function pendingItems(state: DemoState, items: ActionItem[] = actionItems
       case 'session':
         return !state.consignes[item.sessionId]?.length;
       case 'decision':
-        return needsYou(decisionView(item.decision, state.answers[item.id]).phase);
+        return needsYou(viewOf(state, item).phase);
       case 'blocage':
         return true;
     }
@@ -187,13 +215,18 @@ export function pendingItems(state: DemoState, items: ActionItem[] = actionItems
 interface StoreValue {
   state: DemoState;
   dispatch: (action: DemoAction) => void;
+  /** État le plus récent, pour un envoi différé (le toast « Annuler » a pu passer entre-temps). */
+  getState: () => DemoState;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
 
 export function StoreProvider({ children, initial = initialState }: { children: ReactNode; initial?: DemoState }) {
   const [state, dispatch] = useReducer(reducer, initial);
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const ref = useRef(state);
+  ref.current = state;
+  const getState = useCallback(() => ref.current, []);
+  const value = useMemo(() => ({ state, dispatch, getState }), [state, getState]);
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

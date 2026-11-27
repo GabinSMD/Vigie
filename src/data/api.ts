@@ -108,13 +108,20 @@ export interface DecisionBlock {
   links: DecisionLink[];
 }
 
-/** État de l'ordre `repondre` qui répond à la décision (§ 4.1). Écrit par le Worker et le pilote (lot 4). */
+/** Cycle de vie d'un ordre (§ 4.1) : `en_attente` → `pris` → `fait` | `refuse`, ou `expire` s'il n'est pas pris à temps. */
+export type OrdreStatus = 'en_attente' | 'pris' | 'fait' | 'refuse' | 'expire';
+
+/** État de l'ordre `repondre` le plus récent qui répond à la décision (§ 4.1), joint par `GET /api/decisions`. */
 export interface DecisionAnswer {
-  status: 'en_attente' | 'pris' | 'fait' | 'refuse' | 'expire';
+  /** Identifiant de l'ordre, généré par le Worker. */
+  id?: string;
+  status: OrdreStatus;
   optionId: string;
   text?: string;
   /** ISO 8601 UTC. */
   createdAt: string;
+  /** ISO 8601 UTC : au-delà, le pilote ne prend plus l'ordre (D10). */
+  expiresAt: string;
   /** ISO 8601 UTC : moment où le pilote a transmis la réponse. */
   doneAt?: string;
   /** « Transmis à la session », « Posé sur l'issue #1020 ». */
@@ -145,4 +152,74 @@ export interface DecisionsResponse {
   decisions: Decision[];
   /** Projets dont la lecture GitHub a échoué : leurs décisions d'issues et de PR manquent. */
   errors: { projectId: string; error: string }[];
+}
+
+/* --- Ordres (docs/specs/en-attente-de-reponse.md § 4, docs/api-ordres.md) --- */
+
+/** Liste fermée des types d'ordres : `repondre` seulement en V1. */
+export const ORDRE_TYPES = ['repondre'] as const;
+export type OrdreType = (typeof ORDRE_TYPES)[number];
+
+/** Où le pilote transmet la réponse : recopié par le Worker depuis la décision, jamais pris dans la requête. */
+export type OrdreTarget =
+  | { kind: 'session'; id: string; fallbackIssue?: number }
+  | { kind: 'issue'; number: number }
+  | { kind: 'pr'; number: number }
+  | { kind: 'dependabot'; number: number };
+
+/** Ordre tel que le Worker le stocke dans D1 et le donne au pilote. */
+export interface Ordre {
+  id: string;
+  type: OrdreType;
+  /** ISO 8601 UTC. */
+  createdAt: string;
+  /** ISO 8601 UTC (D10). */
+  expiresAt: string;
+  /** Identité vérifiée par Cloudflare Access (adresse e-mail). */
+  by: string;
+  projectId: string;
+  decisionId: string;
+  /** Question de la décision au moment de la réponse, pour le gabarit du pilote. */
+  question: string;
+  target: OrdreTarget;
+  optionId: string;
+  /** Libellé de l'option au moment de la réponse. */
+  optionLabel: string;
+  /** Texte brut de Gabin : une donnée, jamais une commande. */
+  text?: string;
+  status: OrdreStatus;
+  /** ISO 8601 UTC : moment où le pilote l'a pris. */
+  takenAt?: string;
+  doneAt?: string;
+  result?: string;
+  reason?: string;
+}
+
+/** Corps de `POST /api/ordres`. `target`, la question et les options sont relus par le Worker. */
+export interface OrdreRequest {
+  type: OrdreType;
+  projectId: string;
+  decisionId: string;
+  optionId: string;
+  text?: string;
+}
+
+/** Réponse de `POST /api/ordres` (201) et de `PATCH /api/ordres/:id` (200). */
+export interface OrdreResponse {
+  ordre: Ordre;
+}
+
+/** Réponse de `GET /api/ordres` (pilote). */
+export interface OrdresResponse {
+  generatedAt: string;
+  ordres: Ordre[];
+}
+
+/** Corps de `PATCH /api/ordres/:id` (pilote). */
+export type OrdreUpdate = { status: 'pris' } | { status: 'fait'; result: string } | { status: 'refuse'; reason: string };
+
+/** Erreur de l'API : `error` est un code stable, `message` est à afficher tel quel (tutoiement). */
+export interface ApiError {
+  error: string;
+  message?: string;
 }
