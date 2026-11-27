@@ -460,6 +460,66 @@ describe('ordres côté pilote', () => {
   });
 });
 
+describe('ordre pris puis abandonné par le pilote (plus de 2 h)', () => {
+  const HOUR = 3_600_000;
+  const at = (ms: number) => new Date(NOW.getTime() + ms);
+  const read = async (ctx: Ctx) =>
+    ((await (await handle(new Request(url('/api/decisions')), ctx.env, ctx.deps)).json()) as DecisionsResponse).decisions.find(
+      (d) => d.id === '1039-critere-reprise',
+    )!.answer;
+
+  async function taken(ctx: Ctx) {
+    const ordre = await created(await asUser(ctx, answer('1039-critere-reprise', 'trois-verts')));
+    expect((await asPilot(ctx, 'PATCH', `/api/ordres/${ordre.id}`, { status: 'pris' })).status).toBe(200);
+    return ordre;
+  }
+
+  it('bloque encore à 1 h 59, puis est rendu « Refusée » avec une raison, sans écriture', async () => {
+    const ctx = setup();
+    const ordre = await taken(ctx);
+    ctx.setNow(at(2 * HOUR - 60_000));
+    expect((await asUser(ctx, answer('1039-critere-reprise', 'taux'))).status).toBe(409);
+    expect(await read(ctx)).toMatchObject({ id: ordre.id, status: 'pris' });
+
+    ctx.setNow(at(2 * HOUR));
+    expect(await read(ctx)).toMatchObject({ id: ordre.id, status: 'refuse', reason: expect.stringContaining('ne l\'a pas terminée') });
+    const list = async (status: string) =>
+      ((await (await asPilot(ctx, 'GET', `/api/ordres?status=${status}`)).json()) as OrdresResponse).ordres.map((o) => o.id);
+    expect(await list('pris')).toEqual([]);
+    expect(await list('refuse')).toEqual([ordre.id]);
+    expect(ctx.sqlite.prepare('SELECT status FROM ordres').all()).toEqual([{ status: 'pris' }]);
+  });
+
+  it('une nouvelle réponse libère la décision : l’ancien ordre passe à `refuse`, journalisé', async () => {
+    const ctx = setup();
+    const ordre = await taken(ctx);
+    ctx.setNow(at(3 * HOUR));
+    const next = await created(await asUser(ctx, answer('1039-critere-reprise', 'taux')));
+    expect(ctx.sqlite.prepare('SELECT id, status, reason FROM ordres ORDER BY created_at').all()).toEqual([
+      { id: ordre.id, status: 'refuse', reason: expect.stringContaining('ne l\'a pas terminée') },
+      { id: next.id, status: 'en_attente', reason: null },
+    ]);
+    expect(ctx.journal().map((j) => [j.who, j.action, j.ordre_id])).toEqual([
+      [GABIN.email, 'creer', ordre.id],
+      ['pilote', 'prendre', ordre.id],
+      ['vigie', 'refuse', ordre.id],
+      [GABIN.email, 'creer', next.id],
+    ]);
+    expect(await read(ctx)).toMatchObject({ id: next.id, status: 'en_attente' });
+    // Le pilote qui reviendrait finir l'ancien ordre est refusé : il l'ignore.
+    expect((await asPilot(ctx, 'PATCH', `/api/ordres/${ordre.id}`, { status: 'fait', result: 'Transmis à la session' })).status).toBe(409);
+  });
+
+  it('le pilote peut encore le terminer tant que rien ne l’a remplacé', async () => {
+    const ctx = setup();
+    const ordre = await taken(ctx);
+    ctx.setNow(at(5 * HOUR));
+    const done = await asPilot(ctx, 'PATCH', `/api/ordres/${ordre.id}`, { status: 'fait', result: 'Transmis à la session' });
+    expect(done.status).toBe(200);
+    expect(await read(ctx)).toMatchObject({ id: ordre.id, status: 'fait', result: 'Transmis à la session' });
+  });
+});
+
 describe('GET /api/decisions avec les ordres', () => {
   it("joint l'ordre le plus récent à chaque décision ; un ordre en attente expiré est rendu `expire`", async () => {
     const ctx = setup();

@@ -82,9 +82,23 @@ const COLUMNS =
 const opt = <K extends string, V>(key: K, value: V | null | undefined): Partial<Record<K, V>> =>
   value === null || value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 
-/** Un ordre `en_attente` dont l'heure est passée est rendu `expire`, sans attendre qu'on l'écrive. */
-const effectiveStatus = (row: Pick<OrdreRow, 'status' | 'expires_at'>, nowIso: string): OrdreStatus =>
-  row.status === 'en_attente' && row.expires_at <= nowIso ? 'expire' : row.status;
+/**
+ * Un ordre `pris` depuis plus de 2 h est abandonné : le pilote passe toutes les heures (D6) et termine un ordre
+ * dans le même passage, il s'est donc arrêté en route. Sans ce délai, la décision resterait bloquée (409) pour toujours.
+ */
+export const TAKEN_TIMEOUT_MS = 2 * 3_600_000;
+/** Heure ISO avant laquelle un ordre `pris` est abandonné. */
+const staleBefore = (nowIso: string) => new Date(Date.parse(nowIso) - TAKEN_TIMEOUT_MS).toISOString();
+
+const isStale = (row: Pick<OrdreRow, 'status' | 'taken_at'>, nowIso: string) =>
+  row.status === 'pris' && row.taken_at !== null && row.taken_at <= staleBefore(nowIso);
+
+/**
+ * Statut affiché, sans attendre qu'on l'écrive : un ordre `en_attente` dont l'heure est passée est rendu `expire` ;
+ * un ordre `pris` abandonné est rendu `refuse` (le pilote peut encore le terminer tant que rien ne l'a remplacé).
+ */
+const effectiveStatus = (row: Pick<OrdreRow, 'status' | 'expires_at' | 'taken_at'>, nowIso: string): OrdreStatus =>
+  row.status === 'en_attente' && row.expires_at <= nowIso ? 'expire' : isStale(row, nowIso) ? 'refuse' : row.status;
 
 function toOrdre(row: OrdreRow, nowIso: string): Ordre {
   return {
@@ -104,11 +118,16 @@ function toOrdre(row: OrdreRow, nowIso: string): Ordre {
     ...opt('takenAt', row.taken_at),
     ...opt('doneAt', row.done_at),
     ...opt('result', row.result),
-    ...opt('reason', row.reason),
+    ...opt('reason', reasonOf(row, nowIso)),
   };
 }
 
 const EXPIRED_REASON = "Le pilote ne l'a pas prise à temps.";
+const STALE_REASON = "Le pilote l'a prise mais ne l'a pas terminée : vérifie la session, puis réponds à nouveau.";
+
+/** Raison écrite, sinon celle d'un statut rendu sans écriture (expiré, abandonné). */
+const reasonOf = (row: OrdreRow, nowIso: string): string | null =>
+  row.reason ?? (effectiveStatus(row, nowIso) === 'expire' ? EXPIRED_REASON : isStale(row, nowIso) ? STALE_REASON : null);
 
 function toAnswer(row: OrdreRow, nowIso: string): DecisionAnswer {
   const status = effectiveStatus(row, nowIso);
@@ -121,7 +140,7 @@ function toAnswer(row: OrdreRow, nowIso: string): DecisionAnswer {
     expiresAt: row.expires_at,
     ...opt('doneAt', row.done_at),
     ...opt('result', row.result),
-    ...opt('reason', row.reason ?? (status === 'expire' ? EXPIRED_REASON : null)),
+    ...opt('reason', reasonOf(row, nowIso)),
   };
 }
 
@@ -206,14 +225,18 @@ export function checkAnswer(decision: Decision, req: OrdreRequest): string | und
  */
 export async function createOrdre(db: D1Database, decision: Decision, req: OrdreRequest, text: string | undefined, by: string, now: Date): Promise<Ordre> {
   const nowIso = now.toISOString();
+  const stale = staleBefore(nowIso);
   const key = [decision.projectId, decision.id] as const;
 
   const blocking: OrdreStatus[] = decision.kind === 'action' ? ['pris'] : ['pris', 'fait'];
   /* Réponse prise ou transmise qui bloque le nouvel envoi : renvoyée avec le 409 pour que la carte l'affiche (§ 3.3). */
   const holderOf = () =>
     db
-      .prepare(`SELECT ${COLUMNS} FROM ordres WHERE project_id = ?1 AND decision_id = ?2 AND status IN ('pris', 'fait') ORDER BY created_at DESC, rowid DESC LIMIT 1`)
-      .bind(...key)
+      .prepare(
+        `SELECT ${COLUMNS} FROM ordres WHERE project_id = ?1 AND decision_id = ?2 AND (status = 'fait' OR (status = 'pris' AND taken_at > ?3))
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .bind(...key, stale)
       .first<OrdreRow>();
   const conflict = (row: OrdreRow | null): never =>
     row?.status === 'fait'
@@ -244,6 +267,17 @@ export async function createOrdre(db: D1Database, decision: Decision, req: Ordre
   };
   const blockingSql = blocking.map((s) => `'${s}'`).join(', ');
   const results = await db.batch([
+    /* Ordre pris puis abandonné par le pilote : journalisé, puis refusé, ce qui libère la décision. */
+    db
+      .prepare(
+        `INSERT INTO journal (at, who, action, ordre_id, project_id, decision_id, option_id, result)
+         SELECT ?3, 'vigie', 'refuse', id, project_id, decision_id, option_id, 'abandonne par le pilote'
+         FROM ordres WHERE project_id = ?1 AND decision_id = ?2 AND status = 'pris' AND taken_at <= ?4`,
+      )
+      .bind(...key, nowIso, stale),
+    db
+      .prepare(`UPDATE ordres SET status = 'refuse', done_at = ?3, reason = ?4 WHERE project_id = ?1 AND decision_id = ?2 AND status = 'pris' AND taken_at <= ?5`)
+      .bind(...key, nowIso, STALE_REASON, stale),
     db
       .prepare(`UPDATE ordres SET status = 'expire', reason = ?3 WHERE project_id = ?1 AND decision_id = ?2 AND status = 'en_attente' AND expires_at <= ?4`)
       .bind(...key, EXPIRED_REASON, nowIso),
@@ -277,20 +311,23 @@ export async function createOrdre(db: D1Database, decision: Decision, req: Ordre
       .bind(nowIso, by, replaced ? 'remplacer' : 'creer', ordre.id, ordre.projectId, ordre.decisionId, ordre.optionId, replaced ? `remplace ${replaced.id}` : 'en_attente'),
   ]);
   // Le pilote a pris l'ordre précédent entre la lecture et l'écriture.
-  if (!results[2]?.meta.changes) conflict(await holderOf());
+  if (!results[4]?.meta.changes) conflict(await holderOf());
   return ordre;
 }
 
 /** Ordres d'un statut, pour le pilote. `en_attente` : seulement ceux qui ne sont pas expirés (§ 4.3). */
 export async function listOrdres(db: D1Database, status: OrdreStatus, now: Date): Promise<Ordre[]> {
   const nowIso = now.toISOString();
-  const sql =
-    status === 'en_attente'
-      ? `SELECT ${COLUMNS} FROM ordres WHERE status = 'en_attente' AND expires_at > ?2 ORDER BY created_at LIMIT 100`
-      : status === 'expire'
-        ? `SELECT ${COLUMNS} FROM ordres WHERE status = 'expire' OR (status = 'en_attente' AND expires_at <= ?2) ORDER BY created_at DESC LIMIT 100`
-        : `SELECT ${COLUMNS} FROM ordres WHERE status = ?1 ORDER BY created_at DESC LIMIT 100`;
-  const { results } = await db.prepare(sql).bind(status, nowIso).all<OrdreRow>();
+  const stale = staleBefore(nowIso);
+  const [sql, ...params]: [string, ...string[]] = {
+    en_attente: [`SELECT ${COLUMNS} FROM ordres WHERE status = 'en_attente' AND expires_at > ?1 ORDER BY created_at LIMIT 100`, nowIso],
+    expire: [`SELECT ${COLUMNS} FROM ordres WHERE status = 'expire' OR (status = 'en_attente' AND expires_at <= ?1) ORDER BY created_at DESC LIMIT 100`, nowIso],
+    /* Un ordre pris puis abandonné (TAKEN_TIMEOUT_MS) compte parmi les refusés. */
+    pris: [`SELECT ${COLUMNS} FROM ordres WHERE status = 'pris' AND taken_at > ?1 ORDER BY created_at DESC LIMIT 100`, stale],
+    refuse: [`SELECT ${COLUMNS} FROM ordres WHERE status = 'refuse' OR (status = 'pris' AND taken_at <= ?1) ORDER BY created_at DESC LIMIT 100`, stale],
+    fait: [`SELECT ${COLUMNS} FROM ordres WHERE status = 'fait' ORDER BY created_at DESC LIMIT 100`],
+  }[status] as [string, ...string[]];
+  const { results } = await db.prepare(sql).bind(...params).all<OrdreRow>();
   return results.map((r) => toOrdre(r, nowIso));
 }
 
@@ -317,7 +354,8 @@ export function parseUpdate(body: Record<string, unknown>): OrdreUpdate {
 
 /**
  * Fait avancer un ordre : `en_attente` (non expiré) → `pris` → `fait` | `refuse`. Toute autre transition
- * est refusée (409) : le pilote ignore un ordre expiré, inconnu ou déjà traité.
+ * est refusée (409) : le pilote ignore un ordre expiré, inconnu ou déjà traité. Un ordre `pris` abandonné
+ * (plus de 2 h) peut encore être terminé tant qu'une nouvelle réponse ne l'a pas remplacé.
  */
 export async function updateOrdre(db: D1Database, id: string, update: OrdreUpdate, now: Date): Promise<Ordre> {
   const nowIso = now.toISOString();
