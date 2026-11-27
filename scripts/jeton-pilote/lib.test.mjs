@@ -27,6 +27,8 @@ import {
   interpretAccounts,
   interpretNamespace,
   interpretVerify,
+  ipFilterEntries,
+  ipv6Prefix64,
   kvTestParams,
   parseArgs,
   parseBwStatus,
@@ -34,6 +36,7 @@ import {
   parseExisting,
   parseKvTest,
   parsePublicIp,
+  runVerifications,
   shellQuote,
   shouldFallBack,
   sshArgs,
@@ -290,5 +293,90 @@ describe('choix du mode de vérification', () => {
     expect(shouldFallBack({ ok: false, kind: 'jeton' })).toBe(false);
     expect(shouldFallBack({ ok: false, kind: 'permission' })).toBe(false);
     expect(shouldFallBack({ ok: true })).toBe(false);
+  });
+});
+
+describe('filtrage IP', () => {
+  it('ipv6Prefix64 donne le /64 du réseau local', () => {
+    expect(ipv6Prefix64('2a01:e0a:e12:ca50:dcd1:532c:c81b:5481')).toBe('2a01:e0a:e12:ca50::/64');
+    expect(ipv6Prefix64('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipv6Prefix64('2001:0DB8:00a0:0000::')).toBe('2001:db8:a0:0::/64');
+    expect(ipv6Prefix64('203.0.113.7')).toBeNull();
+    expect(ipv6Prefix64('1::2::3')).toBeNull();
+    expect(ipv6Prefix64('1:2:3')).toBeNull();
+    expect(ipv6Prefix64(null)).toBeNull();
+  });
+
+  it("ipFilterEntries : IPv4 publique et /64 IPv6, jamais l'adresse complète", () => {
+    expect(ipFilterEntries({ v4: '88.184.75.41', v6: '2a01:e0a:e12:ca50::5' })).toEqual(['88.184.75.41', '2a01:e0a:e12:ca50::/64']);
+    expect(ipFilterEntries({ v4: '88.184.75.41', v6: null })).toEqual(['88.184.75.41']);
+    expect(ipFilterEntries({ v4: null, v6: null })).toEqual([]);
+  });
+});
+
+describe('runVerifications', () => {
+  const ok = (result) => ({ status: 200, data: { success: true, result } });
+  const ipBlocked = { status: 403, data: { success: false, errors: [{ code: 9109, message: 'Cannot use the access token from location: 2001:db8::5' }] } };
+  const verifyOk = ok({ status: 'active' });
+  const accountsOk = ok([{ id: ACCOUNT, name: 'GabinSMD' }]);
+  const nsOk = ok({ id: KV, title: 'VIGIE_SNAPSHOT' });
+
+  /** Faux Cloudflare : `blocked(mode, path)` dit si le filtrage IP refuse cet appel. */
+  const fakeCf = (blocked) => {
+    const calls = [];
+    const request = async (path, mode) => {
+      calls.push(`${mode} ${path}`);
+      if (blocked(mode, path)) return ipBlocked;
+      if (path === '/user/tokens/verify') return verifyOk;
+      if (path === '/accounts') return accountsOk;
+      return nsOk;
+    };
+    return { calls, request };
+  };
+  const choose = async (accounts) => accounts[0].id;
+
+  it("bascule sur penny quand verify passe depuis le Mac mais que /accounts est refusé par le filtrage IP (cas réel)", async () => {
+    // /user/tokens/verify n'applique pas le filtrage IP : seul /accounts est refusé depuis le Mac.
+    const cf = fakeCf((mode, path) => mode === 'mac' && path !== '/user/tokens/verify');
+    const log = [];
+    const res = await runVerifications({ plan: ['mac', 'penny'], kvId: KV, request: cf.request, chooseAccount: choose, log: (t) => log.push(t) });
+    expect(res).toEqual({ accountId: ACCOUNT, mode: 'penny' });
+    expect(cf.calls).toEqual([
+      'mac /user/tokens/verify',
+      'mac /accounts',
+      'penny /user/tokens/verify',
+      'penny /accounts',
+      `penny /accounts/${ACCOUNT}/storage/kv/namespaces/${KV}`,
+    ]);
+    expect(log).toContain('bascule');
+  });
+
+  it('bascule aussi si seul l\'accès au KV est refusé, sans redemander le compte', async () => {
+    const cf = fakeCf((mode, path) => mode === 'mac' && path.includes('/storage/kv/'));
+    let asked = 0;
+    const res = await runVerifications({ plan: ['mac', 'penny'], kvId: KV, request: cf.request, chooseAccount: async (a) => (asked++, a[0].id) });
+    expect(res.mode).toBe('penny');
+    expect(asked).toBe(1);
+  });
+
+  it('reste sur le Mac quand rien n\'est filtré', async () => {
+    const cf = fakeCf(() => false);
+    expect(await runVerifications({ plan: ['mac', 'penny'], kvId: KV, request: cf.request, chooseAccount: choose })).toEqual({ accountId: ACCOUNT, mode: 'mac' });
+    expect(cf.calls.every((c) => c.startsWith('mac'))).toBe(true);
+  });
+
+  it("s'arrête sans basculer sur une erreur qui n'est pas due au filtrage IP", async () => {
+    const request = async () => ({ status: 401, data: { success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] } });
+    await expect(runVerifications({ plan: ['mac', 'penny'], kvId: KV, request, chooseAccount: choose })).rejects.toThrow(/Jeton refusé/);
+  });
+
+  it('--verif mac : un refus du filtrage IP arrête le script', async () => {
+    const cf = fakeCf((mode, path) => path === '/accounts');
+    await expect(runVerifications({ plan: ['mac'], kvId: KV, request: cf.request, chooseAccount: choose })).rejects.toThrow(/filtrage IP/);
+  });
+
+  it('refus depuis penny aussi : message clair (IPv6 absente du filtrage, par exemple)', async () => {
+    const cf = fakeCf((mode, path) => path === '/accounts');
+    await expect(runVerifications({ plan: ['mac', 'penny'], kvId: KV, request: cf.request, chooseAccount: choose, where: (m) => (m === 'mac' ? 'le Mac' : 'penny') })).rejects.toThrow(/depuis penny/);
   });
 });

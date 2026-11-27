@@ -184,6 +184,27 @@ export function parsePublicIp(output) {
   return res;
 }
 
+/**
+ * Préfixe /64 d'une adresse IPv6 (ex. 2a01:e0a:e12:ca50::/64), ou null. Chez un particulier, le /64 est le
+ * réseau local : il désigne les mêmes machines que l'IPv4 publique partagée, et reste valable quand l'adresse
+ * IPv6 de penny change (adresses temporaires).
+ */
+export function ipv6Prefix64(addr) {
+  if (!addr || !IPV6.test(addr) || !addr.includes(':')) return null;
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? head.length !== 8 : missing < 1) return null;
+  const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-fA-F]{1,4}$/.test(g))) return null;
+  return `${groups.slice(0, 4).map((g) => g.toLowerCase().replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
+/** Entrées à mettre dans le filtrage IP du jeton : l'IPv4 publique, et le /64 IPv6 s'il y en a un. */
+export const ipFilterEntries = (ip) => [ip.v4, ipv6Prefix64(ip.v6)].filter(Boolean);
+
 /** Lit la sortie de SCRIPT_EXISTING : noms des fichiers déjà présents. */
 export const parseExisting = (output) =>
   output
@@ -316,6 +337,48 @@ export function verificationPlan(option) {
 
 /** Après un échec, passe-t-on au mode suivant ? Seulement si c'est le filtrage IP qui a refusé. */
 export const shouldFallBack = (result) => !result.ok && result.kind === 'ip';
+
+/**
+ * Enchaîne les vérifications (jeton actif, compte, espace KV) selon `plan`.
+ * `/user/tokens/verify` n'applique pas le filtrage IP : un refus « ip » peut arriver à n'importe quelle étape.
+ * Il fait alors reprendre toute la suite à l'endroit suivant du plan (penny), compte déjà choisi conservé.
+ * `request(path, mode)` renvoie { status, data } ; `chooseAccount(accounts)` renvoie l'id choisi ;
+ * `log(type, message)` reçoit 'etape', 'ok' ou 'bascule'. Renvoie { accountId, mode } ou lève une erreur
+ * dont le message vient de explainFailure.
+ */
+export async function runVerifications({ plan, kvId, request, chooseAccount, log = () => {}, where = (m) => m }) {
+  let chosen = null;
+  for (const [i, mode] of plan.entries()) {
+    const at = where(mode);
+    const check = (result) => {
+      if (result.ok) return true;
+      if (shouldFallBack(result) && i < plan.length - 1) {
+        log('bascule', `${explainFailure(result, at)} C'est attendu avec le filtrage IP : je refais les vérifications depuis ${where(plan[i + 1])}.`);
+        return false;
+      }
+      throw new Error(explainFailure(result, at));
+    };
+    const get = async (path) => {
+      log('etape', `GET ${path} depuis ${at}`);
+      const { status, data } = await request(path, mode);
+      return [status, data];
+    };
+
+    const verify = interpretVerify(...(await get('/user/tokens/verify')));
+    if (!check(verify)) continue;
+    log('ok', `Jeton actif${verify.expiresOn ? `, expire le ${verify.expiresOn}` : ', sans date d\'expiration'} (vérifié depuis ${at}).`);
+
+    const accounts = interpretAccounts(...(await get('/accounts')));
+    if (!check(accounts)) continue;
+    chosen ??= await chooseAccount(accounts.accounts);
+
+    const ns = interpretNamespace(...(await get(`/accounts/${chosen}/storage/kv/namespaces/${kvId}`)), kvId);
+    if (!check(ns)) continue;
+    log('ok', `Espace KV accessible : ${ns.title} (${kvId}), vérifié depuis ${at}.`);
+    return { accountId: chosen, mode };
+  }
+  throw new Error('Vérifications impossibles : plan vide.');
+}
 
 /** Explication d'un échec, à afficher (ne contient jamais le jeton : seulement codes et messages de Cloudflare). */
 export function explainFailure(result, where) {

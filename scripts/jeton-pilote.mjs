@@ -31,10 +31,7 @@ import {
   assertNoSecret,
   bwItem,
   checkTokenShape,
-  explainFailure,
-  interpretAccounts,
-  interpretNamespace,
-  interpretVerify,
+  ipFilterEntries,
   isAccountId,
   kvTestParams,
   parseArgs,
@@ -44,7 +41,7 @@ import {
   parseKvTest,
   parsePublicIp,
   revokeHelp,
-  shouldFallBack,
+  runVerifications,
   sshArgs,
   verificationPlan,
 } from './jeton-pilote/lib.mjs';
@@ -210,8 +207,6 @@ async function cfGet(path, mode) {
   return parseCurlOutput(out);
 }
 
-const asArgs = ({ status, data }) => [status, data];
-
 function openBrowser(url) {
   say(`  Ouvre : ${bold(url)}`);
   if (DRY) return;
@@ -230,22 +225,25 @@ async function stepGuide() {
   const res = await sshAction(`adresse publique de ${HOTE} (curl https://api.ipify.org)`, SCRIPT_PUBLIC_IP, []);
   if (res) ip = parsePublicIp(res.out);
   if (DRY) ip = { v4: '<adresse IPv4 de penny>', v6: null };
+  const filter = DRY ? [ip.v4, '<préfixe IPv6 /64 s\'il y en a un>'] : ipFilterEntries(ip);
   if (ip.v4 || ip.v6) {
     ok(`Adresse publique de ${HOTE} : ${[ip.v4, ip.v6].filter(Boolean).map(bold).join(' et ')}`);
   } else warn(`Adresse publique de ${HOTE} introuvable : lance « curl https://api.ipify.org » sur ${HOTE} et note-la.`);
 
   say(`
-  Dans Cloudflare : ${bold('Mon profil → Jetons d\'API → Créer un jeton → Jeton personnalisé (« Commencer »)')}.
-    • Nom : « Vigie – pilote (KV) ».
-    • Autorisations : ${bold('Compte → Workers KV Storage → Modifier')}. Rien d'autre.
-    • Ressources du compte : ${bold('Inclure → le compte de Vigie')} (pas « Tous les comptes »).
-    • Filtrage des adresses IP clientes : ${bold('Est dans')} → ${[ip.v4, ip.v6].filter(Boolean).join(', ') || 'l\'adresse publique de penny'}.
-    • Durée de vie : à ton choix (sans date de fin, ou une date de fin : il faudra alors relancer ce script).
+  Dans Cloudflare : ${bold('Jetons API → Créer un jeton → Commencer de zéro → « Commencer avec une politique de compte »')}.
+    • Nom du jeton : « Vigie – pilote (KV) ».
+    • Politique : ${bold('Inclure → le compte de Vigie')} (choisi dans la liste, pas « Tous les comptes »),
+      puis cherche ${bold('Workers KV Storage')} et coche ${bold('Modifier')} (« Stockage KV de Workers »). Rien d'autre.
+    • Expiration du jeton : à ton choix (« Pas d'expiration », ou une date : il faudra alors relancer ce script).
+    • Filtrage des adresses IP client : ${bold('Autoriser')} → ${filter.length ? filter.map(bold).join(' et ') : 'l\'adresse publique de penny'}
+      (une entrée par ligne, « Ajouter plus »). Jamais l'adresse Tailscale (100.x.x.x) : Cloudflare ne la voit pas.
     • « Continuer vers le résumé » → « Créer le jeton » → copie la valeur (Cloudflare ne l'affiche qu'une fois).
 
   ${yellow('À savoir')} : Cloudflare ne permet pas de limiter ce jeton à un seul espace KV ; il peut lire et écrire
-  dans tous les KV du compte. Le filtrage IP limite les dégâts s'il fuit. Si l'adresse publique de penny change
-  (box qui redémarre), le pilote ne pourra plus écrire : mets à jour le filtrage dans Cloudflare.`);
+  dans tous les KV du compte. Le filtrage IP limite les dégâts s'il fuit. Si ton réseau a de l'IPv6, mets aussi
+  le préfixe /64 : sinon les appels qui partent en IPv6 (le pilote compris) sont refusés. Si l'adresse publique
+  change (box qui redémarre, autre fournisseur), modifie le filtrage du jeton : sa valeur ne change pas.`);
   openBrowser(TOKENS_PAGE);
 }
 
@@ -279,55 +277,41 @@ async function stepVerify(kvId) {
     return '<compte>';
   }
 
-  let mode = null;
-  for (const [i, candidate] of plan.entries()) {
-    const where = candidate === 'mac' ? 'le Mac' : HOTE;
-    say(`  → GET /user/tokens/verify depuis ${where}`);
-    const result = interpretVerify(...asArgs(await cfGet('/user/tokens/verify', candidate)));
-    if (result.ok) {
-      mode = candidate;
-      ok(`Jeton actif${result.expiresOn ? `, expire le ${result.expiresOn}` : ', sans date d\'expiration'} (vérifié depuis ${where}).`);
-      break;
-    }
-    if (shouldFallBack(result) && i < plan.length - 1) {
-      warn(`${explainFailure(result, where)} C'est attendu avec le filtrage IP : je vérifie depuis ${HOTE}.`);
-      continue;
-    }
-    throw new Stop(explainFailure(result, where));
+  try {
+    const { accountId } = await runVerifications({
+      plan,
+      kvId,
+      request: cfGet,
+      chooseAccount,
+      where: (mode) => (mode === 'mac' ? 'le Mac' : HOTE),
+      log: (type, message) => (type === 'ok' ? ok(message) : type === 'bascule' ? warn(message) : say(`  → ${message}`)),
+    });
+    return accountId;
+  } catch (error) {
+    if (error instanceof Stop) throw error;
+    throw new Stop(error.message);
   }
-  const where = mode === 'mac' ? 'le Mac' : HOTE;
+}
 
-  say(`  → GET /accounts depuis ${where}`);
-  const accounts = interpretAccounts(...asArgs(await cfGet('/accounts', mode)));
-  if (!accounts.ok) throw new Stop(explainFailure(accounts, where));
-  let accountId;
-  if (accounts.accounts.length === 1) {
-    accountId = accounts.accounts[0].id;
-    ok(`Compte : ${accounts.accounts[0].name} (${accountId}).`);
-  } else if (accounts.accounts.length > 1) {
-    accounts.accounts.forEach((a, i) => say(`    ${i + 1}. ${a.name} (${a.id})`));
+async function chooseAccount(accounts) {
+  if (accounts.length === 1) {
+    ok(`Compte : ${accounts[0].name} (${accounts[0].id}).`);
+    return accounts[0].id;
+  }
+  if (accounts.length > 1) {
+    accounts.forEach((a, i) => say(`    ${i + 1}. ${a.name} (${a.id})`));
     for (;;) {
       const n = Number(await ask('Numéro du compte de Vigie :', '1'));
-      if (Number.isInteger(n) && n >= 1 && n <= accounts.accounts.length) {
-        accountId = accounts.accounts[n - 1].id;
-        break;
-      }
+      if (Number.isInteger(n) && n >= 1 && n <= accounts.length) return accounts[n - 1].id;
       fail('Numéro invalide.');
     }
-  } else {
-    warn('Le jeton ne liste aucun compte. Copie l\'identifiant du compte depuis le tableau de bord (colonne de droite de la page d\'accueil d\'un domaine, « ID de compte »).');
-    for (;;) {
-      accountId = (await ask('Identifiant du compte (32 caractères) :')).toLowerCase();
-      if (isAccountId(accountId)) break;
-      fail('Identifiant invalide : 32 caractères hexadécimaux attendus.');
-    }
   }
-
-  say(`  → GET /accounts/${accountId}/storage/kv/namespaces/${kvId} depuis ${where}`);
-  const ns = interpretNamespace(...asArgs(await cfGet(`/accounts/${accountId}/storage/kv/namespaces/${kvId}`, mode)), kvId);
-  if (!ns.ok) throw new Stop(explainFailure(ns, where));
-  ok(`Espace KV accessible : ${ns.title} (${kvId}).`);
-  return accountId;
+  warn('Le jeton ne liste aucun compte. Copie l\'identifiant du compte depuis le tableau de bord (colonne de droite de la page d\'accueil d\'un domaine, « ID de compte »).');
+  for (;;) {
+    const id = (await ask('Identifiant du compte (32 caractères) :')).toLowerCase();
+    if (isAccountId(id)) return id;
+    fail('Identifiant invalide : 32 caractères hexadécimaux attendus.');
+  }
 }
 
 async function stepWrite(accountId) {

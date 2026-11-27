@@ -88,7 +88,9 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
 
     Le script relève l'adresse publique de penny, te guide pour créer le jeton dans Cloudflare (permission **Compte → Workers KV Storage → Modifier**, rien d'autre, limité au compte de Vigie, **filtrage IP sur penny**), te demande de le coller sans l'afficher, le vérifie avec l'API Cloudflare (`/user/tokens/verify`, compte, accès au KV de `worker/wrangler.toml`), pose les deux fichiers sur penny, fait un essai bout en bout depuis penny (écrit, relit et supprime la clé `vigie-test-jeton`, jamais `snapshot`), puis propose de ranger le jeton dans Vaultwarden si `bw` est déverrouillé sur penny. Le jeton ne passe que par l'entrée standard de `ssh` : jamais sur le disque du Mac, jamais à l'écran, jamais en argument d'une commande.
 
-    Avec le filtrage IP, les appels depuis le Mac sont refusés : par défaut (`--verif auto`), le script vérifie d'abord depuis le Mac, puis depuis penny (`curl` y lit l'en-tête d'autorisation sur son entrée standard). `--verif penny` va directement sur penny, `--verif mac` n'essaie que le Mac (jeton sans filtrage IP).
+    Dans le filtrage IP, mets l'IPv4 publique de chez toi **et**, si ton réseau a de l'IPv6, son préfixe `/64` (le script les affiche) : sinon les appels qui partent en IPv6, ceux du pilote compris, sont refusés (erreur 9109). Jamais l'adresse Tailscale (`100.x.x.x`) : Cloudflare ne la voit pas.
+
+    Avec le filtrage IP, les appels depuis le Mac peuvent être refusés : par défaut (`--verif auto`), le script vérifie d'abord depuis le Mac, puis reprend toutes les vérifications depuis penny dès que Cloudflare refuse un appel pour cause de filtrage IP (`curl` y lit l'en-tête d'autorisation sur son entrée standard). `--verif penny` va directement sur penny, `--verif mac` n'essaie que le Mac (jeton sans filtrage IP).
 
     **À la main**, si tu préfères : crée le jeton comme ci-dessus sur <https://dash.cloudflare.com/profile/api-tokens>, puis sur penny :
 
