@@ -15,7 +15,7 @@ App (toi, connexion Access)          Worker Vigie (D1 : ordres + journal)       
 ```
 
 - Liste fermée de types : `repondre` seulement en V1. Tout autre type est refusé (422) par le Worker et doit être ignoré par le pilote.
-- Cycle de vie : `en_attente` → `pris` → `fait` | `refuse`. Un ordre `en_attente` non pris avant `expiresAt` devient `expire` (D10). Un nouvel envoi de l'app remplace l'ordre encore `en_attente` (l'ancien passe à `refuse`, « Remplacée par une nouvelle réponse. ») ; après `pris`, l'app reçoit 409 « Déjà transmise ».
+- Cycle de vie : `en_attente` → `pris` → `fait` | `refuse`. Un ordre `en_attente` non pris avant `expiresAt` devient `expire` (D10). Un nouvel envoi de l'app remplace l'ordre encore `en_attente` (l'ancien passe à `refuse`, « Remplacée par une nouvelle réponse. ») ; après `pris`, l'app reçoit 409 « Déjà transmise ». Un ordre resté `pris` plus de **2 h** est considéré comme abandonné par le pilote (§ 5 bis) : il est rendu `refuse`, et la décision accepte de nouveau une réponse.
 - Chaque création, prise, fin ou refus est recopié dans la table `journal` (qui, quoi, quand, option, résultat). **Jamais le texte** de la réponse, et un texte refusé (secret, trop long…) n'est ni stocké ni journalisé.
 
 ## 2. Authentification
@@ -109,8 +109,8 @@ Contrôles, dans l'ordre du § 4.2 :
 | Corps | Transition permise | Effet |
 | --- | --- | --- |
 | `{ "status": "pris" }` | `en_attente` non expiré → `pris` | `takenAt` = maintenant. L'app affiche « Le pilote est en train de la transmettre » et ne peut plus la modifier. |
-| `{ "status": "fait", "result": "Transmis à la session" }` | `pris` → `fait` | `doneAt` = maintenant ; « Répondu le … » sur la carte, avec `result`. |
-| `{ "status": "refuse", "reason": "Session fermée, aucune issue liée" }` | `pris` → `refuse` | `doneAt` = maintenant ; « Refusée » avec `reason`. |
+| `{ "status": "fait", "result": "Transmis à la session" }` | `pris` → `fait` (même abandonné, tant qu'aucune nouvelle réponse ne l'a remplacé) | `doneAt` = maintenant ; « Répondu le … » sur la carte, avec `result`. |
+| `{ "status": "refuse", "reason": "Session fermée, aucune issue liée" }` | `pris` → `refuse` (idem) | `doneAt` = maintenant ; « Refusée » avec `reason`. |
 
 `result` et `reason` : 200 caractères au plus, refusés (422) s'ils ressemblent à un secret. Toute autre transition répond **409** `transition_interdite` (ordre expiré, déjà pris, déjà fini) : le pilote l'ignore. Ordre inconnu : 404. Réponse **200** : `{ "ordre": Ordre }`.
 
@@ -118,12 +118,20 @@ Contrôles, dans l'ordre du § 4.2 :
 
 1. `GET /api/ordres?status=en_attente`.
 2. Pour chaque ordre, dans l'ordre : `PATCH {status: "pris"}`. Sur 409, passer au suivant (expiré entre-temps ou remplacé par une nouvelle réponse).
-3. Transmettre selon `target` (§ 4.4), puis `PATCH {status: "fait", result}` ou `{status: "refuse", reason}`. Une réponse n'est jamais perdue en silence : en cas de doute, `refuse` avec la raison, la carte garde le choix pour que tu répondes de nouveau.
+3. Transmettre selon `target` (§ 4.4), puis, **dans le même passage**, `PATCH {status: "fait", result}` ou `{status: "refuse", reason}`. Une réponse n'est jamais perdue en silence : en cas de doute, `refuse` avec la raison, la carte garde le choix pour que tu répondes de nouveau.
 4. Ignorer tout type inconnu (ne pas le prendre).
 
 ## 5. Expiration (D10)
 
 `expiresAt = max(createdAt + 3 h, prochain passage du pilote + 1 h)`, les passages étant à l'heure pile de 8 h à 21 h, heure de Paris (D6). Le jour : 3 h. Une réponse donnée à 21 h 30 ou à 23 h attend le passage de 8 h et expire à 9 h. Calcul partagé par le Worker et l'app : `orderExpiresAt` dans `src/data/ordre.ts`.
+
+## 5 bis. Ordre pris puis abandonné
+
+Si le pilote s'arrête entre `pris` et `fait` / `refuse`, l'ordre ne doit pas bloquer la décision pour toujours. Au-delà de **2 h** après `takenAt` (`TAKEN_TIMEOUT_MS` dans `worker/src/ordres.ts` ; le pilote passe toutes les heures et termine un ordre dans le même passage) :
+
+- `GET /api/decisions` et `GET /api/ordres` le rendent `refuse`, avec la raison « Le pilote l'a prise mais ne l'a pas terminée : vérifie la session, puis réponds à nouveau. » ; il apparaît avec `?status=refuse`, plus avec `?status=pris`. La carte affiche « Refusée » et « Répondre à nouveau ».
+- Une nouvelle réponse de l'app l'écrit `refuse` (journal : `vigie`, `refuse`, « abandonne par le pilote ») puis dépose le nouvel ordre.
+- Tant qu'aucune nouvelle réponse ne l'a remplacé, le pilote peut encore le terminer (`fait` ou `refuse`) ; ensuite, son `PATCH` reçoit 409 et il l'ignore. Une réponse partiellement transmise avant l'arrêt peut donc arriver deux fois à la session si tu réponds de nouveau : la raison affichée invite à vérifier la session d'abord.
 
 ## 6. Base D1
 
