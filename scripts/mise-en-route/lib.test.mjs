@@ -31,11 +31,14 @@ import {
   parseArgs,
   parseJsonArray,
   parseWhoamiAccounts,
+  pilotCredentialsChoice,
   readD1Id,
   readDomain,
   readKvId,
   readVar,
+  replacePilotToken,
   sameState,
+  secretAction,
   setD1Id,
   setDomain,
   setKvId,
@@ -282,6 +285,36 @@ Getting User settings...
     const a = newPilotToken();
     expect(a).toMatch(/^[\w-]{43}$/);
     expect(newPilotToken()).not.toBe(a);
+  });
+});
+
+describe('secrets et identifiants du pilote (reprise après le nettoyage)', () => {
+  it('garde un secret posé ; pose un secret absent ou à remplacer dont la valeur est connue', () => {
+    expect(secretAction({ present: true, replace: false, available: true })).toBe('keep');
+    expect(secretAction({ present: false, replace: false, available: true })).toBe('put');
+    expect(secretAction({ present: true, replace: true, available: true })).toBe('put');
+  });
+
+  it('--from secrets après le nettoyage : garde les secrets GitHub posés dont la valeur a disparu', () => {
+    expect(secretAction({ present: true, replace: true, available: false })).toBe('keep-unavailable');
+    expect(secretAction({ present: false, replace: true, available: false })).toBe('missing');
+    expect(secretAction({ present: false, replace: false, available: false })).toBe('missing');
+  });
+
+  it('PILOT_TOKEN : refait avec --from secrets, ou quand un nouveau jeton de service est créé sans lui', () => {
+    expect(replacePilotToken({ from: 'secrets', pilotFile: null })).toBe(true);
+    expect(replacePilotToken({ from: 'ordres', pilotFile: { clientId: 'a', clientSecret: 'b' } })).toBe(true);
+    expect(replacePilotToken({ from: 'ordres', pilotFile: { clientId: 'a', clientSecret: 'b', pilotToken: 'c' } })).toBe(false);
+    expect(replacePilotToken({ from: 'ordres', pilotFile: null })).toBe(false);
+    expect(replacePilotToken({ from: null, pilotFile: null })).toBe(false);
+  });
+
+  it('nettoyage : Entrée seule ne jette pas les identifiants du pilote, il faut « afficher » ou « jeter »', () => {
+    expect(pilotCredentialsChoice('afficher')).toBe('afficher');
+    expect(pilotCredentialsChoice(' Jeter ')).toBe('jeter');
+    expect(pilotCredentialsChoice('')).toBeNull();
+    expect(pilotCredentialsChoice('oui')).toBeNull();
+    expect(pilotCredentialsChoice(undefined)).toBeNull();
   });
 });
 

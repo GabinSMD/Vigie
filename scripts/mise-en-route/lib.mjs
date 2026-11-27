@@ -342,6 +342,35 @@ export const findD1Database = (list, name = 'vigie') => list.find((db) => db.nam
 /** Jeton porteur du pilote : 32 octets aléatoires, en base64url. Jamais écrit dans le dépôt. */
 export const newPilotToken = () => randomBytes(32).toString('base64url');
 
+/**
+ * Que faire d'un secret du Worker à l'étape « secrets ».
+ * - `keep` : déjà posé et pas à remplacer ;
+ * - `put` : à poser (absent, ou à remplacer) et sa valeur est connue ici ;
+ * - `keep-unavailable` : à remplacer, mais sa valeur n'existe plus en local (état et clé .pem supprimés au
+ *   nettoyage) : on garde celui qui est posé, ce qui permet `--from secrets` pour refaire seulement PILOT_TOKEN ;
+ * - `missing` : ni posé ni connu : il faut reprendre l'étape qui le produit.
+ */
+export function secretAction({ present, replace, available }) {
+  if (present && !replace) return 'keep';
+  if (available) return 'put';
+  return present ? 'keep-unavailable' : 'missing';
+}
+
+/**
+ * Faut-il (re)poser PILOT_TOKEN ? Oui s'il manque, si on reprend à l'étape « secrets », ou si un nouveau jeton
+ * de service vient d'être créé sans PILOT_TOKEN à côté : le pilote reçoit alors ses identifiants ensemble.
+ */
+export const replacePilotToken = ({ from, pilotFile }) => from === 'secrets' || Boolean(pilotFile && !pilotFile.pilotToken);
+
+/**
+ * Réponse au nettoyage pour les identifiants du pilote : `afficher`, `jeter` (confirmé, ils seront perdus),
+ * ou `null` (Entrée seule, ou autre chose) : on redemande, car ils ne sont lisibles nulle part ailleurs.
+ */
+export function pilotCredentialsChoice(answer) {
+  const a = String(answer ?? '').trim().toLowerCase();
+  return a === 'afficher' || a === 'jeter' ? a : null;
+}
+
 // ---------------------------------------------------------------------------
 // Sorties de wrangler
 
