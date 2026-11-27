@@ -36,7 +36,10 @@ import {
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const config = JSON.parse(readFileSync(join(ROOT, 'config', 'projets.json'), 'utf8'));
-const toml = readFileSync(join(ROOT, 'worker', 'wrangler.toml'), 'utf8');
+// Le fichier du dépôt porte la configuration de production après la mise en route :
+// les tests repartent de sa structure réelle, avec les valeurs factices remises.
+const repoToml = readFileSync(join(ROOT, 'worker', 'wrangler.toml'), 'utf8');
+const toml = setDomain(setKvId(repoToml, PLACEHOLDER_KV_ID), 'vigie.example.org', 'example.org');
 
 describe('options', () => {
   it('lit --dry-run et --from (nom ou numéro)', () => {
@@ -175,7 +178,13 @@ describe('installations et config/projets.json', () => {
 });
 
 describe('wrangler.toml', () => {
-  it('part des valeurs factices', () => {
+  it('lit une configuration valide dans le fichier du dépôt', () => {
+    expect(readKvId(repoToml)).toMatch(/^[0-9a-f]{32}$/);
+    const { host, zone } = readDomain(repoToml);
+    expect(host.endsWith(`.${zone}`)).toBe(true);
+  });
+
+  it('remet les valeurs factices', () => {
     expect(readKvId(toml)).toBe(PLACEHOLDER_KV_ID);
     expect(readDomain(toml)).toEqual({ host: 'vigie.example.org', zone: 'example.org' });
   });
