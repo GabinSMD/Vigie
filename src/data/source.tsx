@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { ProjetsResponse, SessionsResponse } from './api';
+import type { DecisionsResponse, ProjetsResponse, SessionsResponse } from './api';
 import { buildLiveData, type DataSet } from './live';
 import { actionItems, projects, pullRequests, sessions } from './mock';
 
@@ -35,8 +35,13 @@ export function DataProvider({ children, apiUrl = import.meta.env.VITE_API_URL a
   useEffect(() => {
     if (!apiUrl) return;
     let cancelled = false;
-    Promise.all([getJson<ProjetsResponse>(apiUrl, '/api/projets'), getJson<SessionsResponse>(apiUrl, '/api/sessions')])
-      .then(([projets, sess]) => !cancelled && setLive(buildLiveData(projets, sess)))
+    Promise.all([
+      getJson<ProjetsResponse>(apiUrl, '/api/projets'),
+      getJson<SessionsResponse>(apiUrl, '/api/sessions'),
+      /* Sans les décisions, le reste s'affiche : les questions sont alors lues dans l'instantané. */
+      getJson<DecisionsResponse>(apiUrl, '/api/decisions').catch(() => null),
+    ])
+      .then(([projets, sess, decisions]) => !cancelled && setLive({ ...buildLiveData(projets, sess, new Date(), decisions), apiUrl }))
       .catch((error: unknown) =>
         !cancelled && setLive({ ...emptyLive, error: error instanceof Error ? error.message : 'Lecture impossible' }),
       );
@@ -57,7 +62,7 @@ export function useData() {
   return useMemo(
     () => ({
       ...data,
-      /** Vrai en données réelles : actions désactivées, coûts masqués. */
+      /** Vrai en données réelles : actions désactivées (sauf les réponses aux décisions), coûts masqués. */
       live: data.mode === 'live',
       findProject: (id: string | undefined) => data.projects.find((p) => p.id === id),
       findSession: (id: string | undefined) => data.sessions.find((s) => s.id === id),

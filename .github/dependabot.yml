@@ -1,0 +1,48 @@
+# Dependency updates. Same settings as SIMOND-ANCE-BROS/ecole-saas: only
+# versions published for at least 14 days, no major versions (planned in their
+# own issue and PR), every update is a PR reviewed like any other, nothing is
+# merged automatically.
+version: 2
+updates:
+  # The web app (/) and the Cloudflare worker (/worker), each with its own
+  # package-lock.json.
+  - package-ecosystem: npm
+    directories: ["/", "/worker"]
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Patch and minor updates of dev tools travel together.
+      dev-tools:
+        dependency-type: development
+        update-types: [minor, patch]
+      react:
+        patterns: ["react", "react-dom", "react-router-dom"]
+
+  # Includes the shared workflow from GabinSMD/shared-workflows pinned by
+  # commit SHA in strip-platform-footer.yml (#28): that repository has no tags,
+  # so Dependabot proposes the latest commit of its default branch.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: chore
+      include: scope
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      actions:
+        patterns: ["*"]

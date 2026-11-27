@@ -43,20 +43,31 @@ function StatusGlyph({ status }: { status: Status }) {
   }
 }
 
+/** Icône « envoyé » (↗), pour une pastille neutre qui doit tout de même en porter une. */
+function SentGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4.5 11.5l7-7M6 4.5h5.5V10" />
+    </svg>
+  );
+}
+
 interface Props {
   status: Status;
+  /** Remplace l'icône d'état : `sent` (↗) pour « Envoyée ». */
+  glyph?: 'sent';
   /** Mot affiché. Obligatoire pour l'état neutre (« En cours », « En file »…). */
   label?: string;
   role?: 'status';
 }
 
 /** Pastille d'état : couleur + icône + mot, jamais la couleur seule. */
-export function StatusPill({ status, label, role }: Props) {
+export function StatusPill({ status, label, role, glyph }: Props) {
   const text = label ?? defaultLabel[status];
   if (!text) throw new Error('StatusPill neutre : le libellé est obligatoire.');
   return (
     <span className={className[status]} data-status={status} role={role}>
-      <StatusGlyph status={status} />
+      {glyph === 'sent' ? <SentGlyph /> : <StatusGlyph status={status} />}
       {text}
     </span>
   );

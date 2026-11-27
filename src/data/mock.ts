@@ -1,3 +1,5 @@
+import { toDecisionItem } from './decisionState';
+import { mockDecisions } from './mockDecisions';
 import type { ActionItem, Project, PullRequest, Session } from './types';
 
 /*
@@ -135,6 +137,7 @@ export const pullRequests: PullRequest[] = [
 export const projects: Project[] = [
   {
     id: 'streambox',
+    url: 'https://github.com/exemple/streambox',
     name: 'StreamBox',
     status: 'bloque',
     line: '1 session active · 0 PR prête · 2 issues en file',
@@ -148,6 +151,7 @@ export const projects: Project[] = [
   },
   {
     id: 'ecole-saas',
+    url: 'https://github.com/exemple/ecole-saas',
     name: 'ecole-saas',
     status: 'attention',
     line: '1 PR prête · 2 issues en file, 1 en cours · 1 attend ton avis',
@@ -173,6 +177,7 @@ export const projects: Project[] = [
   },
   {
     id: 'treizero',
+    url: 'https://github.com/exemple/treizero',
     name: 'treizero',
     status: 'attention',
     line: '1 session active · 1 PR en brouillon · 4 issues en file',
@@ -186,6 +191,7 @@ export const projects: Project[] = [
   },
   {
     id: 'waterline',
+    url: 'https://github.com/exemple/waterline',
     name: 'Waterline',
     status: 'attention',
     statusLabel: 'À valider',
@@ -218,15 +224,7 @@ export const actionItems: ActionItem[] = [
     title: 'Passer à Node 24',
     detail: 'Prête à fusionner · pas en brouillon',
   },
-  {
-    kind: 'question',
-    id: 'q-tre',
-    projectId: 'treizero',
-    title: "La limite de 8 joueurs s'applique-t-elle à la Coupe de France ?",
-    detail: 'en brouillon',
-    prRef: '#204',
-  },
-  { kind: 'livrable', id: 'liv-water', projectId: 'waterline', title: 'Maquette « Amirauté » livrée' },
+  ...mockDecisions().map(toDecisionItem),
 ];
 
 export const findProject = (id: string | undefined) => projects.find((p) => p.id === id);

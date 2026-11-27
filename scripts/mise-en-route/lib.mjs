@@ -11,6 +11,7 @@ export const STEPS = [
   { id: 'installations', titre: 'Installations de l\'App et dépôts suivis' },
   { id: 'cloudflare', titre: 'Cloudflare : connexion, KV, wrangler.toml' },
   { id: 'access', titre: 'Cloudflare Access (avant toute exposition publique)' },
+  { id: 'ordres', titre: 'File des ordres : base D1, migrations, accès du pilote' },
   { id: 'deploiement', titre: 'Build de l\'app et déploiement du Worker' },
   { id: 'secrets', titre: 'Secrets du Worker' },
   { id: 'verification', titre: 'Vérification : Access bloque bien' },
@@ -261,6 +262,86 @@ export function setDomain(toml, host, zone) {
   return lines.join('\n');
 }
 
+export const PLACEHOLDER_D1_ID = '00000000-0000-0000-0000-000000000000';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Bornes de la section `[[header]]` (ou `[header]`) qui contient `binding = "<binding>"` (ou de la première, sans binding). */
+function sectionOf(lines, header, binding) {
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== header) continue;
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^\s*\[/.test(lines[j])) {
+        end = j;
+        break;
+      }
+    }
+    const body = lines.slice(i + 1, end);
+    if (!binding || body.some((l) => new RegExp(`^\\s*binding\\s*=\\s*"${binding}"`).test(l))) return { start: i + 1, end };
+  }
+  return null;
+}
+
+/** Lit l'identifiant de la base D1 `binding` (ou null). */
+export function readD1Id(toml, binding = 'VIGIE_DB') {
+  const lines = toml.split('\n');
+  const section = sectionOf(lines, '[[d1_databases]]', binding);
+  if (!section) return null;
+  for (let i = section.start; i < section.end; i++) {
+    const m = lines[i].match(/^\s*database_id\s*=\s*"([^"]*)"/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** Remplace l'identifiant de la base D1 `binding`. */
+export function setD1Id(toml, id, binding = 'VIGIE_DB') {
+  if (!UUID.test(id)) throw new Error(`Identifiant de base D1 invalide : ${id}`);
+  const lines = toml.split('\n');
+  const section = sectionOf(lines, '[[d1_databases]]', binding);
+  if (!section) throw new Error(`Section [[d1_databases]] avec binding = "${binding}" introuvable dans wrangler.toml.`);
+  for (let i = section.start; i < section.end; i++) {
+    if (/^\s*database_id\s*=\s*"[^"]*"/.test(lines[i])) {
+      lines[i] = lines[i].replace(/"[^"]*"/, `"${id}"`);
+      return lines.join('\n');
+    }
+  }
+  throw new Error(`Ligne database_id = "…" introuvable sous le binding ${binding}.`);
+}
+
+/** Lit une variable de `[vars]` (ou null). */
+export function readVar(toml, key) {
+  const lines = toml.split('\n');
+  const section = sectionOf(lines, '[vars]');
+  if (!section) return null;
+  for (let i = section.start; i < section.end; i++) {
+    const m = lines[i].match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`));
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** Remplace une variable existante de `[vars]` (valeur sans guillemet ni retour à la ligne). */
+export function setVar(toml, key, value) {
+  if (!/^[\w.:/-]{1,200}$/.test(value)) throw new Error(`Valeur inattendue pour ${key}.`);
+  const lines = toml.split('\n');
+  const section = sectionOf(lines, '[vars]');
+  if (!section) throw new Error('Section [vars] introuvable dans wrangler.toml.');
+  for (let i = section.start; i < section.end; i++) {
+    if (new RegExp(`^\\s*${key}\\s*=\\s*"[^"]*"`).test(lines[i])) {
+      lines[i] = lines[i].replace(/"[^"]*"/, `"${value}"`);
+      return lines.join('\n');
+    }
+  }
+  throw new Error(`Variable ${key} introuvable dans [vars].`);
+}
+
+/** Trouve la base D1 de Vigie dans `wrangler d1 list --json`. */
+export const findD1Database = (list, name = 'vigie') => list.find((db) => db.name === name) ?? null;
+
+/** Jeton porteur du pilote : 32 octets aléatoires, en base64url. Jamais écrit dans le dépôt. */
+export const newPilotToken = () => randomBytes(32).toString('base64url');
+
 // ---------------------------------------------------------------------------
 // Sorties de wrangler
 
@@ -296,8 +377,29 @@ export function findKvNamespace(list, title = 'VIGIE_SNAPSHOT', workerName = 'vi
 // ---------------------------------------------------------------------------
 // Cloudflare Access
 
-/** Corps de création (ou de mise à jour) de l'application Access : tout le nom d'hôte, une seule adresse. */
-export function accessAppBody({ host, email }) {
+export const PILOT_SERVICE_TOKEN = 'Vigie pilote';
+
+/**
+ * Corps de création (ou de mise à jour) de l'application Access : tout le nom d'hôte, une seule adresse,
+ * et, si `serviceTokenId` est donné, le jeton de service du pilote (règle « Service Auth », sans identité).
+ */
+export function accessAppBody({ host, email, serviceTokenId }) {
+  const policies = [
+    {
+      name: 'Vigie : une seule adresse',
+      decision: 'allow',
+      include: [{ email: { email } }],
+      precedence: 1,
+    },
+  ];
+  if (serviceTokenId) {
+    policies.push({
+      name: 'Vigie : pilote (jeton de service)',
+      decision: 'non_identity',
+      include: [{ service_token: { token_id: serviceTokenId } }],
+      precedence: 2,
+    });
+  }
   return {
     name: 'Vigie',
     type: 'self_hosted',
@@ -305,33 +407,54 @@ export function accessAppBody({ host, email }) {
     session_duration: '24h',
     app_launcher_visible: false,
     auto_redirect_to_identity: false,
-    policies: [
-      {
-        name: 'Vigie : une seule adresse',
-        decision: 'allow',
-        include: [{ email: { email } }],
-        precedence: 1,
-      },
-    ],
+    policies,
   };
+}
+
+/** Jeton de service autorisé par l'application existante (règle « Service Auth »), ou null. */
+export function appServiceTokenId(app) {
+  for (const p of app?.policies ?? []) {
+    if (p.decision !== 'non_identity') continue;
+    const rule = (p.include ?? []).find((r) => r.service_token?.token_id);
+    if (rule) return rule.service_token.token_id;
+  }
+  return null;
+}
+
+/** Adresse autorisée par l'application existante (règle « allow » à une seule adresse), ou null. */
+export function appEmail(app) {
+  const allow = (app?.policies ?? []).find((p) => p.decision === 'allow');
+  return allow?.include?.length === 1 ? (allow.include[0].email?.email ?? null) : null;
 }
 
 /** Application Access déjà posée sur ce nom d'hôte (ou null). */
 export const findAccessApp = (apps, host) =>
   apps.find((a) => a.domain === host || a.domain === `${host}/` || a.domain === `${host}/*`) ?? null;
 
-/** Vrai si l'application existante a déjà le bon réglage (une seule règle, la bonne adresse). */
-export function accessAppUpToDate(app, { host, email }) {
+/**
+ * Vrai si l'application existante a déjà le bon réglage : une règle « allow » pour la seule bonne adresse,
+ * et, si `serviceTokenId` est donné, une seule règle « Service Auth » pour ce jeton. Rien d'autre.
+ */
+export function accessAppUpToDate(app, { host, email, serviceTokenId }) {
   if (!app || app.domain !== host || app.type !== 'self_hosted') return false;
   const policies = app.policies ?? [];
-  if (policies.length !== 1) return false;
-  const [p] = policies;
-  return (
-    p.decision === 'allow' &&
-    (p.include ?? []).length === 1 &&
-    p.include[0].email?.email?.toLowerCase() === email.toLowerCase() &&
-    (p.exclude ?? []).length === 0 &&
-    (p.require ?? []).length === 0
+  if (policies.length !== (serviceTokenId ? 2 : 1)) return false;
+  const allow = policies.find((p) => p.decision === 'allow');
+  const allowOk =
+    allow &&
+    (allow.include ?? []).length === 1 &&
+    allow.include[0].email?.email?.toLowerCase() === email.toLowerCase() &&
+    (allow.exclude ?? []).length === 0 &&
+    (allow.require ?? []).length === 0;
+  if (!allowOk) return false;
+  if (!serviceTokenId) return true;
+  const service = policies.find((p) => p.decision === 'non_identity');
+  return Boolean(
+    service &&
+      (service.include ?? []).length === 1 &&
+      service.include[0].service_token?.token_id === serviceTokenId &&
+      (service.exclude ?? []).length === 0 &&
+      (service.require ?? []).length === 0,
   );
 }
 

@@ -1,5 +1,8 @@
 import { relativeFr } from '../lib/format';
-import type { ApiProject, ApiPullRequest, ProjetsResponse, SessionsResponse } from './api';
+import type { ApiProject, ApiPullRequest, Decision, DecisionsResponse, ProjetsResponse, SessionsResponse } from './api';
+import { IMPLICIT_OPTIONS } from './decision';
+import { toDecisionItem } from './decisionState';
+import type { SnapshotDeliverable, SnapshotQuestion, SnapshotSession } from './snapshot';
 import type { ActionItem, Project, PullRequest, Session, Status } from './types';
 
 /** Ensemble de données que lit l'app, venu de `mock.ts` ou de l'API. */
@@ -13,6 +16,8 @@ export interface DataSet {
   snapshotAt: string | null;
   loading: boolean;
   error: string | null;
+  /** Adresse de l'API en données réelles (`/` : même origine) : les réponses partent vers `POST /api/ordres`. */
+  apiUrl?: string;
 }
 
 const prStatus = (pr: ApiPullRequest): { status: Status; label: string; line: string } => {
@@ -63,11 +68,63 @@ function projectLine(sessions: Session[], prs: PullRequest[], issues: number, er
   return parts.join(' · ');
 }
 
-/** Transforme les réponses du Worker en données d'écran. Fonction pure : `now` sert aux « il y a … ». */
+const PR_REF = /^#([1-9][0-9]*)$/;
+
+/**
+ * Question de l'instantané lue directement, si `GET /api/decisions` n'a pas répondu.
+ * Les valeurs manquantes suivent le § 2.1 ; en cas de doute, `reversible` vaut non.
+ */
+function fromSnapshotQuestion(q: SnapshotQuestion, s: SnapshotSession, askedAt: string): Decision {
+  const pr = PR_REF.exec(q.prRef ?? '');
+  return {
+    id: q.id,
+    projectId: s.projectId,
+    kind: q.kind ?? 'choix',
+    question: q.title,
+    context: q.context ?? (q.detail ? [q.detail] : []),
+    options: q.options?.length ? q.options : IMPLICIT_OPTIONS.map((o) => ({ ...o })),
+    ...(q.recommended !== undefined ? { recommended: q.recommended } : {}),
+    reversible: q.reversible ?? false,
+    topic: q.topic ?? 'technique',
+    freeText: q.freeText ?? 'facultatif',
+    blocking: q.blocking ?? false,
+    links: q.links ?? (pr ? [{ kind: 'pr', number: Number(pr[1]) }] : []),
+    askedAt: q.askedAt ?? askedAt,
+    askedBy: { kind: 'session', id: s.id },
+    source: 'session',
+  };
+}
+
+/** Livrable de l'instantané : une décision `validation` (« Valider » ou « Faire reprendre »). */
+function fromDeliverable(d: SnapshotDeliverable, s: SnapshotSession, askedAt: string): Decision {
+  return {
+    id: d.id,
+    projectId: s.projectId,
+    kind: 'validation',
+    question: d.title,
+    context: [],
+    options: IMPLICIT_OPTIONS.map((o) => ({ ...o })),
+    reversible: true,
+    topic: 'produit',
+    freeText: 'non',
+    blocking: false,
+    links: [],
+    askedAt,
+    askedBy: { kind: 'session', id: s.id },
+    source: 'session',
+  };
+}
+
+/**
+ * Transforme les réponses du Worker en données d'écran. Fonction pure : `now` sert aux « il y a … ».
+ * `decisions` vient de `GET /api/decisions`, qui contient déjà les questions de l'instantané ;
+ * s'il manque (`null`), les questions sont lues dans l'instantané.
+ */
 export function buildLiveData(
   projets: ProjetsResponse,
   sessionsResponse: SessionsResponse,
   now: Date = new Date(),
+  decisions: DecisionsResponse | null = null,
 ): DataSet {
   const snap = sessionsResponse.snapshot;
   const sessions: Session[] = (snap?.sessions ?? []).map((s) => ({
@@ -117,12 +174,18 @@ export function buildLiveData(
     } else if (s.waitingFor) {
       actionItems.push({ kind: 'session', id: `ses-${s.id}`, projectId: s.projectId, sessionId: s.id, title: s.waitingFor });
     }
-    for (const q of s.questions ?? []) {
-      actionItems.push({ kind: 'question', id: `q-${q.id}`, projectId: s.projectId, title: q.title, detail: q.detail, prRef: q.prRef });
+    const askedAt = snap?.generatedAt ?? now.toISOString();
+    if (!decisions) {
+      for (const q of s.questions ?? []) actionItems.push(toDecisionItem(fromSnapshotQuestion(q, s, askedAt)));
     }
-    for (const d of s.deliverables ?? []) {
-      actionItems.push({ kind: 'livrable', id: `liv-${d.id}`, projectId: s.projectId, title: d.title });
+    /* /api/decisions contient aussi les livrables : le Worker peut alors recevoir leur réponse. */
+    if (!decisions) {
+      for (const d of s.deliverables ?? []) actionItems.push(toDecisionItem(fromDeliverable(d, s, askedAt)));
     }
+  }
+  for (const d of decisions?.decisions ?? []) {
+    const item = toDecisionItem(d);
+    if (!actionItems.some((i) => i.id === item.id)) actionItems.push(item);
   }
   for (const pr of pullRequests) {
     if (pr.status === 'ok') {

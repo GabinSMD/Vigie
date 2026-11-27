@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ActionRow } from '../components/ActionRow';
 import { BackLink } from '../components/BackLink';
-import { DecisionCard, isDecision } from '../components/DecisionCard';
+import { DecisionCard } from '../components/DecisionCard';
 import { CostGauge } from '../components/CostGauge';
 import { LaunchedList } from '../components/LaunchedRow';
 import { StatusPill } from '../components/StatusPill';
 import { ActionButton } from '../components/ActionButton';
+import { answeredWithin, isDecision, needsYou, sortDecisionItems, type DecisionItem } from '../data/decisionState';
 import { useData } from '../data/source';
-import { pendingItems, useStore } from '../data/store';
+import { useStore, viewOf } from '../data/store';
 import type { Project } from '../data/types';
 import { formatCost, gauge } from '../lib/format';
 import { MergeSheet } from '../sheets/MergeSheet';
@@ -72,14 +73,29 @@ function SessionsTab({ project }: { project: Project }) {
   const { sessions, actionItems } = useData();
   const list = sessions.filter((s) => project.sessionIds.includes(s.id));
   const launched = state.launched.filter((l) => l.projectId === project.id);
-  const decisions = pendingItems(state, actionItems).filter((i) => i.projectId === project.id && isDecision(i));
-  if (list.length === 0 && launched.length === 0 && decisions.length === 0)
+  const own = actionItems.filter(isDecision).filter((i) => i.projectId === project.id);
+  const phaseOf = (i: DecisionItem) => viewOf(state, i);
+  const waiting = sortDecisionItems(own.filter((i) => needsYou(phaseOf(i).phase)));
+  const sent = sortDecisionItems(own.filter((i) => phaseOf(i).phase === 'envoyee'));
+  /* « Répondues récemment » : 7 jours (§ 3.1), la plus récente d'abord. */
+  const answered = sortDecisionItems(own.filter((i) => answeredWithin(phaseOf(i), 24 * 7))).reverse();
+  if (list.length === 0 && launched.length === 0 && waiting.length + sent.length + answered.length === 0)
     return <p className="det">Aucune session pour ce projet aujourd'hui.</p>;
-  const firstWaiting = decisions.length > 0 ? undefined : list.find((s) => s.status === 'attention' && !state.consignes[s.id]?.length);
+  const firstWaiting = waiting.length > 0 ? undefined : list.find((s) => s.status === 'attention' && !state.consignes[s.id]?.length);
 
   return (
     <>
-      {decisions.map((item, index) => isDecision(item) && <DecisionCard key={item.id} item={item} primary={index === 0} showProject={false} />)}
+      {waiting.length > 0 && (
+        <h2 className="h2">
+          En attente de ta réponse ({waiting.length})
+        </h2>
+      )}
+      {waiting.map((item, index) => (
+        <DecisionCard key={item.id} item={item} primary={index === 0} showProject={false} />
+      ))}
+      {sent.map((item) => (
+        <DecisionCard key={item.id} item={item} showProject={false} />
+      ))}
       <LaunchedList sessions={launched} showProject={false} />
       {list.map((s) => {
         const sent = Boolean(state.consignes[s.id]?.length);
@@ -108,6 +124,16 @@ function SessionsTab({ project }: { project: Project }) {
           </ActionRow>
         );
       })}
+      {answered.length > 0 && (
+        <section aria-labelledby="sec-answered" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          <h2 id="sec-answered" className="h2">
+            Répondues récemment
+          </h2>
+          {answered.map((item) => (
+            <DecisionCard key={item.id} item={item} showProject={false} />
+          ))}
+        </section>
+      )}
     </>
   );
 }

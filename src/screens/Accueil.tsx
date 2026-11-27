@@ -5,8 +5,9 @@ import { DecisionCard } from '../components/DecisionCard';
 import { Icon } from '../components/Icon';
 import { LaunchedList } from '../components/LaunchedRow';
 import { ActionButton } from '../components/ActionButton';
+import { answeredWithin, isDecision, needsYou, sortDecisionItems, type DecisionItem } from '../data/decisionState';
 import { useData } from '../data/source';
-import { pendingItems, useStore, type Launched } from '../data/store';
+import { pendingItems, useStore, viewOf, type Launched } from '../data/store';
 import type { ActionItem } from '../data/types';
 import { clockFr, plural } from '../lib/format';
 import { ConsigneSheet } from '../sheets/ConsigneSheet';
@@ -38,8 +39,17 @@ export function Accueil() {
   if (failing) items = items.filter((i) => i.projectId !== 'treizero');
 
   const blocking = items.filter((i) => i.kind === 'blocage');
-  const toValidate = items.filter((i) => i.kind !== 'blocage');
-  if (items.length === 0 && !error) return <Empty launched={state.launched} snapshotAt={live ? snapshotAt : undefined} />;
+  const toValidate = items.filter((i) => i.kind !== 'blocage' && i.kind !== 'decision');
+
+  /* « En attente de ta réponse » (§ 3.1) : à trancher d'abord, puis envoyées, puis répondues depuis moins de 24 h, repliées. */
+  const allDecisions = actionItems.filter(isDecision).filter((i) => !failing || i.projectId !== 'treizero');
+  const phaseOf = (i: DecisionItem) => viewOf(state, i);
+  const waiting = sortDecisionItems(allDecisions.filter((i) => needsYou(phaseOf(i).phase)));
+  const sent = sortDecisionItems(allDecisions.filter((i) => phaseOf(i).phase === 'envoyee'));
+  const answered = sortDecisionItems(allDecisions.filter((i) => answeredWithin(phaseOf(i), 24)));
+
+  if (items.length === 0 && sent.length === 0 && !error)
+    return <Empty launched={state.launched} snapshotAt={live ? snapshotAt : undefined} />;
 
   const subtitle = live
     ? `${plural(items.length, 'élément')}${snapshotAt ? ` · Données de ${clockFr(snapshotAt)}` : ' · Pas encore de données de sessions'}`
@@ -50,7 +60,7 @@ export function Accueil() {
       : `${plural(items.length, 'élément')}${blocking.length ? ` · ${blocking.length} bloque un agent` : ''}`;
 
   /* Un seul bouton plein par écran : celui de la carte la plus urgente. */
-  const primaryId = offline || failing ? null : (blocking[0] ?? toValidate[0])?.id;
+  const primaryId = offline || failing ? null : (blocking[0] ?? waiting[0] ?? toValidate[0])?.id;
 
   const renderItem = (item: ActionItem) => {
     const pri = item.id === primaryId ? 'btn pri' : 'btn';
@@ -119,9 +129,8 @@ export function Accueil() {
             </Link>
           </ActionRow>
         );
-      case 'question':
-      case 'livrable':
-        return <DecisionCard key={item.id} item={item} primary={item.id === primaryId} disabled={offline} />;
+      case 'decision':
+        return <DecisionCard key={item.id} item={item} primary={item.id === primaryId} disabled={offline} compact />;
     }
   };
 
@@ -186,6 +195,21 @@ export function Accueil() {
               Bloque un agent ({blocking.length})
             </h2>
             {blocking.map(renderItem)}
+          </section>
+        )}
+        {waiting.length + sent.length + answered.length > 0 && (
+          <section aria-labelledby="sec-dec" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+            <h2 id="sec-dec" className="h2">
+              En attente de ta réponse ({waiting.length})
+            </h2>
+            {waiting.map(renderItem)}
+            {sent.map(renderItem)}
+            {answered.length > 0 && (
+              <details className="answered">
+                <summary>Répondues depuis 24 h ({answered.length})</summary>
+                {answered.map(renderItem)}
+              </details>
+            )}
           </section>
         )}
         {toValidate.length > 0 && (
