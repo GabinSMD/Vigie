@@ -222,4 +222,6 @@ export type OrdreUpdate = { status: 'pris' } | { status: 'fait'; result: string 
 export interface ApiError {
   error: string;
   message?: string;
+  /** 409 de `POST /api/ordres` : la réponse déjà prise (`pris`) ou transmise (`fait`) qui bloque le nouvel envoi. */
+  answer?: DecisionAnswer;
 }

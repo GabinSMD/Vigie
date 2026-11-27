@@ -76,13 +76,15 @@ export function DecisionCard({ item, primary, disabled, showProject = true, comp
   const showForm = view.phase === 'attente' || editing !== null;
 
   const send: Send = async (optionId, text, extra = {}) => {
+    /* « Modifier » : la réponse envoyée avant attend encore le pilote et reste valable si la nouvelle est refusée. */
+    const keepPrevious = view.phase === 'envoyee' && view.editable;
     if (!live) {
       dispatch({ type: 'answer', itemId: item.id, optionId, text, ...extra });
     } else if (extra.undoable) {
       /* Oui/non en un tap (D13) : l'ordre ne part qu'à la fin des 5 s d'annulation. */
-      sender.later(item, optionId, extra.message ?? 'Réponse envoyée.');
+      sender.later(item, optionId, extra.message ?? 'Réponse envoyée.', keepPrevious);
     } else {
-      const result = await sender.now(item, optionId, text, extra.message);
+      const result = await sender.now(item, optionId, text, extra.message, keepPrevious);
       if (result.kind === 'error') return result.message;
     }
     setEditing(null);
