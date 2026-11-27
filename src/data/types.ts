@@ -1,3 +1,5 @@
+import type { Decision } from './api';
+
 /** État affiché : toujours rendu avec une couleur ET une icône ET un mot. */
 export type Status = 'ok' | 'attention' | 'bloque' | 'neutre';
 
@@ -85,5 +87,5 @@ export type ActionItem =
   | { kind: 'blocage'; id: string; projectId: string; sessionId: string; title: string; detail: string }
   | { kind: 'session'; id: string; projectId: string; sessionId: string; title: string }
   | { kind: 'pr'; id: string; projectId: string; prNumber: string; title: string; detail: string }
-  | { kind: 'question'; id: string; projectId: string; title: string; detail: string; prRef: string }
-  | { kind: 'livrable'; id: string; projectId: string; title: string };
+  /** Décision « En attente de ta réponse » (docs/specs/en-attente-de-reponse.md § 2.4), y compris les livrables (`kind: validation`). */
+  | { kind: 'decision'; id: string; projectId: string; decision: Decision };

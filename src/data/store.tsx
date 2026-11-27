@@ -1,5 +1,7 @@
 import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react';
 import { COST_ALERT_THRESHOLD, DAILY_SESSION_CAP, GLOBAL_COST_CAP, SESSIONS_TODAY, actionItems, projects } from './mock';
+import { decisionView, needsYou, type LocalAnswer } from './decisionState';
+import { looksLikeSecret } from './secrets';
 import type { ActionItem } from './types';
 
 /** Réglages d'autonomie, de budget et d'alerte. */
@@ -46,9 +48,11 @@ export interface Launched {
 export interface DemoState {
   merged: string[];
   consignes: Record<string, string[]>;
-  answers: Record<string, 'oui' | 'non'>;
-  validated: string[];
+  /** Réponses aux décisions, par id de ligne : locales tant que l'ordre `repondre` (lot 4) n'existe pas. */
+  answers: Record<string, LocalAnswer>;
   toast: string | null;
+  /** Ligne dont la réponse peut encore être annulée depuis le toast (oui/non en un tap, D13). */
+  undo: string | null;
   settings: Settings;
   sessionsToday: number;
   launched: Launched[];
@@ -57,8 +61,8 @@ export interface DemoState {
 export type DemoAction =
   | { type: 'merge'; prNumber: string }
   | { type: 'consigne'; sessionId: string; text: string }
-  | { type: 'answer'; itemId: string; answer: 'oui' | 'non' }
-  | { type: 'validate'; itemId: string }
+  | { type: 'answer'; itemId: string; optionId: string; text?: string; at?: string; message?: string; undoable?: boolean }
+  | { type: 'undoAnswer'; itemId: string }
   | { type: 'notify'; message: string }
   | { type: 'settings'; patch: SettingsPatch }
   | { type: 'projectCap'; projectId: string; cap: number }
@@ -79,8 +83,8 @@ export const initialState: DemoState = {
   merged: [],
   consignes: {},
   answers: {},
-  validated: [],
   toast: null,
+  undo: null,
   settings: initialSettings,
   sessionsToday: SESSIONS_TODAY,
   launched: [],
@@ -96,23 +100,36 @@ export const remainingSessions = (state: DemoState) => Math.max(0, state.setting
 export function reducer(state: DemoState, action: DemoAction): DemoState {
   switch (action.type) {
     case 'merge':
-      return { ...state, merged: [...state.merged, action.prNumber], toast: `${action.prNumber} fusionnée.` };
+      return { ...state, merged: [...state.merged, action.prNumber], toast: `${action.prNumber} fusionnée.`, undo: null };
     case 'consigne': {
       const previous = state.consignes[action.sessionId] ?? [];
       return {
         ...state,
         consignes: { ...state.consignes, [action.sessionId]: [...previous, action.text] },
         toast: 'Consigne envoyée.',
+        undo: null,
       };
     }
-    case 'answer':
-      return { ...state, answers: { ...state.answers, [action.itemId]: action.answer }, toast: 'Réponse envoyée.' };
-    case 'validate':
-      return { ...state, validated: [...state.validated, action.itemId], toast: 'Livrable validé.' };
+    case 'answer': {
+      const text = action.text?.trim() || undefined;
+      /* Garde-fou (§ 7) : un texte qui ressemble à un secret n'est ni gardé ni envoyé. */
+      if (text && looksLikeSecret(text)) return { ...state, toast: "Ressemble à un secret : rien n'est parti.", undo: null };
+      const answer: LocalAnswer = { optionId: action.optionId, at: action.at ?? new Date().toISOString(), ...(text ? { text } : {}) };
+      return {
+        ...state,
+        answers: { ...state.answers, [action.itemId]: answer },
+        toast: action.message ?? 'Réponse envoyée.',
+        undo: action.undoable ? action.itemId : null,
+      };
+    }
+    case 'undoAnswer': {
+      const { [action.itemId]: _removed, ...rest } = state.answers;
+      return { ...state, answers: rest, toast: 'Réponse annulée.', undo: null };
+    }
     case 'notify':
-      return { ...state, toast: action.message };
+      return { ...state, toast: action.message, undo: null };
     case 'dismissToast':
-      return { ...state, toast: null };
+      return { ...state, toast: null, undo: null };
     case 'settings': {
       const next = { ...state.settings, ...action.patch };
       next.sessionCap = clamp(next.sessionCap, LIMITS.sessionCap);
@@ -135,16 +152,18 @@ export function reducer(state: DemoState, action: DemoAction): DemoState {
         ...state,
         settings: { ...state.settings, autoMerge: action.on ? [...others, action.projectId] : others },
         toast: action.on ? `Fusion automatique activée pour ${name}.` : `Fusion automatique désactivée pour ${name}.`,
+        undo: null,
       };
     }
     case 'launch':
       /* Garde-fou : le plafond du jour bloque le lancement, même si l'écran a laissé passer. */
-      if (remainingSessions(state) === 0) return { ...state, toast: 'Plafond du jour atteint : session non lancée.' };
+      if (remainingSessions(state) === 0) return { ...state, toast: 'Plafond du jour atteint : session non lancée.', undo: null };
       return {
         ...state,
         sessionsToday: state.sessionsToday + 1,
         launched: [action.session, ...state.launched],
         toast: `Session lancée : ${action.session.role} sur ${projectName(action.session.projectId)}.`,
+        undo: null,
       };
   }
 }
@@ -157,10 +176,8 @@ export function pendingItems(state: DemoState, items: ActionItem[] = actionItems
         return !state.merged.includes(item.prNumber);
       case 'session':
         return !state.consignes[item.sessionId]?.length;
-      case 'question':
-        return !state.answers[item.id];
-      case 'livrable':
-        return !state.validated.includes(item.id);
+      case 'decision':
+        return needsYou(decisionView(item.decision, state.answers[item.id]).phase);
       case 'blocage':
         return true;
     }

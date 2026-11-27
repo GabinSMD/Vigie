@@ -34,7 +34,7 @@ describe('Sessions lancées', () => {
       expect(within(card).queryByRole('link')).not.toBeInTheDocument();
     }
     /* Pas une décision : le compteur et le bouton plein ne bougent pas. */
-    expect(screen.getByText('5 éléments · 1 bloque un agent')).toBeInTheDocument();
+    expect(screen.getByText('12 éléments · 1 bloque un agent')).toBeInTheDocument();
     expect(container.querySelectorAll('main .btn.pri')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Voir où poser la clé' })).toHaveClass('pri');
   });
@@ -81,6 +81,6 @@ describe('Sessions lancées', () => {
     const card = within(screen.getByRole('region', { name: 'Sessions lancées' })).getByRole('article');
     expect(card).toHaveTextContent('ecole-saas · Développeur');
     expect(card).toHaveTextContent('Issue #458 : Page de connexion lente');
-    expect(screen.getByText('5 éléments · 1 bloque un agent')).toBeInTheDocument();
+    expect(screen.getByText('12 éléments · 1 bloque un agent')).toBeInTheDocument();
   });
 });
