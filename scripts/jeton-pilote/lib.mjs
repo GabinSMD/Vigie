@@ -15,7 +15,9 @@ export const ACCOUNT_FILE = 'cloudflare-account.id';
 export const SNAPSHOT_KEY = 'snapshot';
 /** Clé du test bout en bout (écrite, relue, puis supprimée). */
 export const TEST_KEY = 'vigie-test-jeton';
-export const BW_ITEM_NAME = 'Cloudflare – jeton KV du pilote Vigie';
+/** Nom de l'élément du coffre, sur le modèle des autres (« Cloudflare — jeton DNS Traefik (ACME) »). */
+export const VAULT_ITEM_NAME = 'Cloudflare — jeton KV du pilote Vigie';
+export const VAULT_ITEM_LOGIN = 'pilote-vigie';
 export const VERIF_MODES = ['auto', 'mac', 'penny'];
 
 /** Analyse les options de la ligne de commande. */
@@ -141,7 +143,35 @@ export const SCRIPT_KV_TEST = [
   'echo "delete $x"',
 ].join('\n');
 
-/** État du coffre sur penny : la sortie JSON de `bw status`, ou « absent » si la CLI manque. */
+/**
+ * Outil de coffre disponible sur penny : « vw » si `vw.sh` est là (outil du homelab, compte machine,
+ * collection « Homelab — infra »), sinon la sortie JSON de `bw status`, sinon « absent ».
+ */
+export const SCRIPT_VAULT_TOOL = [
+  'if command -v vw.sh >/dev/null 2>&1; then echo vw',
+  'elif command -v bw >/dev/null 2>&1; then bw status 2>/dev/null || echo "{}"',
+  'else echo absent; fi',
+].join('\n');
+
+/** L'élément existe-t-il déjà ? Paramètres : nom. Sortie : « present » ou « absent ». */
+export const SCRIPT_VW_EXISTS = 'if vw.sh liste 2>/dev/null | grep -Fxq -- "$1"; then echo present; else echo absent; fi';
+
+/**
+ * Range le jeton avec `vw.sh ecrire`, qui lit la valeur dans un fichier (jamais en argument, jamais sur
+ * la sortie standard). Le fichier posé finit par un retour à la ligne : une copie temporaire sans lui
+ * (0600, supprimée à la sortie) est passée à vw.sh. Paramètres : dossier, nom, identifiant, url, note.
+ * `ecrire` crée l'élément ou met à jour son mot de passe. Sortie : la dernière ligne de vw.sh.
+ */
+export const SCRIPT_VW_WRITE = [
+  'set -eu',
+  'umask 077',
+  't=$(mktemp); o=$(mktemp)',
+  'trap \'rm -f "$t" "$o"\' EXIT',
+  `tr -d '\\n' < "$1/${TOKEN_FILE}" > "$t"`,
+  'if vw.sh ecrire "$2" "$3" "$t" "$4" "$5" > "$o" 2>&1; then tail -n 1 "$o"; else tail -n 5 "$o" >&2; exit 4; fi',
+].join('\n');
+
+/** Ancien chemin, si vw.sh manque : `bw status` (même sortie que SCRIPT_VAULT_TOOL sans vw.sh). */
 export const SCRIPT_BW_STATUS = 'if command -v bw >/dev/null 2>&1; then bw status 2>/dev/null || echo "{}"; else echo absent; fi';
 
 /** Crée l'élément du coffre. Entrée standard : le JSON de l'élément (`bw encode` puis `bw create item` le lisent sur stdin). */
@@ -243,9 +273,10 @@ export function parseKvTest(output) {
   return res;
 }
 
-/** Lit la sortie de SCRIPT_BW_STATUS : 'absent', 'unlocked', 'locked', 'unauthenticated' ou 'inconnu'. */
+/** Lit la sortie de SCRIPT_VAULT_TOOL ou SCRIPT_BW_STATUS : 'vw', 'absent', 'unlocked', 'locked', 'unauthenticated' ou 'inconnu'. */
 export function parseBwStatus(output) {
   const text = output.trim();
+  if (text === 'vw') return 'vw';
   if (text === 'absent') return 'absent';
   try {
     const status = JSON.parse(text.slice(text.indexOf('{'))).status;
@@ -262,7 +293,7 @@ export function bwItem(token, accountId, now = new Date()) {
     collectionIds: null,
     folderId: null,
     type: 1,
-    name: BW_ITEM_NAME,
+    name: VAULT_ITEM_NAME,
     notes:
       `Jeton d'API Cloudflare du pilote des sessions cloud (Vigie), posé le ${now.toISOString().slice(0, 10)}.\n` +
       `Permission : Compte → Workers KV Storage → Modifier. Filtrage IP : penny.\n` +
@@ -397,8 +428,20 @@ export function explainFailure(result, where) {
   }
 }
 
-/** Page du tableau de bord : jetons (révocation). */
+/** Paramètres de SCRIPT_VW_WRITE. Aucun n'est secret : la note décrit le jeton sans le contenir. */
+export function vwWriteParams({ accountId, filter = [] }) {
+  const note =
+    `Jeton d'API Cloudflare du pilote des sessions cloud (Vigie). Permission : Workers KV Storage → Modifier, ` +
+    `compte ${accountId}.${filter.length ? ` Filtrage IP : ${filter.join(' et ')}.` : ''} Fichier : ${PILOTE_DIR}/${TOKEN_FILE}.`;
+  return [PILOTE_DIR, VAULT_ITEM_NAME, VAULT_ITEM_LOGIN, TOKENS_PAGE, note];
+}
+
+/** Commande à lancer sur le Mac pour copier le jeton depuis penny vers le presse-papiers, sans l'afficher (bash, zsh, fish). */
+export const clipboardCommand = (hote) => `ssh ${hote} cat ${PILOTE_DIR}/${TOKEN_FILE} | tr -d '\\n' | pbcopy`;
+
+/** Pour plus tard : comment couper l'accès du pilote. Rien à faire tant que tout marche. */
 export const revokeHelp = (hote) => [
-  `Cloudflare : ${TOKENS_PAGE} → le jeton → « … » → Supprimer (ou « Renouveler » pour en changer la valeur).`,
-  `Puis, sur ${hote} : rm ${PILOTE_DIR}/${TOKEN_FILE} (le pilote saute alors l'instantané sans rien casser).`,
+  'Pour plus tard, rien à faire maintenant : seulement si le jeton fuit, si penny change, ou si tu arrêtes Vigie.',
+  `  1. Cloudflare : ${TOKENS_PAGE} → le jeton → « … » → Supprimer (« Renouveler » change sa valeur : relance alors ce script).`,
+  `  2. Sur ${hote} : rm ${PILOTE_DIR}/${TOKEN_FILE} (le pilote saute alors l'instantané sans rien casser).`,
 ];

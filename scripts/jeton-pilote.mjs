@@ -15,11 +15,13 @@ import { fileURLToPath } from 'node:url';
 import { readDomain, readKvId, PLACEHOLDER_KV_ID } from './mise-en-route/lib.mjs';
 import {
   ACCOUNT_FILE,
-  BW_ITEM_NAME,
+  VAULT_ITEM_NAME,
   CF_API,
   PILOTE_DIR,
   SCRIPT_BW_CREATE,
-  SCRIPT_BW_STATUS,
+  SCRIPT_VAULT_TOOL,
+  SCRIPT_VW_EXISTS,
+  SCRIPT_VW_WRITE,
   SCRIPT_CF_GET,
   SCRIPT_EXISTING,
   SCRIPT_KV_TEST,
@@ -31,6 +33,7 @@ import {
   assertNoSecret,
   bwItem,
   checkTokenShape,
+  clipboardCommand,
   ipFilterEntries,
   isAccountId,
   kvTestParams,
@@ -44,6 +47,7 @@ import {
   runVerifications,
   sshArgs,
   verificationPlan,
+  vwWriteParams,
 } from './jeton-pilote/lib.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,6 +157,7 @@ async function askHidden(question) {
 // ---------------------------------------------------------------------------
 // ssh et Cloudflare
 
+let ipFilter = []; // entrées du filtrage IP proposées à l'étape 1 (notées dans le coffre)
 let token = null; // en mémoire seulement : jamais écrit sur le disque du Mac, jamais affiché, jamais en argument
 
 /**
@@ -226,6 +231,7 @@ async function stepGuide() {
   if (res) ip = parsePublicIp(res.out);
   if (DRY) ip = { v4: '<adresse IPv4 de penny>', v6: null };
   const filter = DRY ? [ip.v4, '<préfixe IPv6 /64 s\'il y en a un>'] : ipFilterEntries(ip);
+  ipFilter = DRY ? [] : filter;
   if (ip.v4 || ip.v6) {
     ok(`Adresse publique de ${HOTE} : ${[ip.v4, ip.v6].filter(Boolean).map(bold).join(' et ')}`);
   } else warn(`Adresse publique de ${HOTE} introuvable : lance « curl https://api.ipify.org » sur ${HOTE} et note-la.`);
@@ -357,36 +363,57 @@ async function stepTest(kvId) {
 
 async function stepVault(accountId) {
   title(6, `Vaultwarden (depuis ${HOTE})`);
-  const res = await sshAction('état du coffre (bw status)', SCRIPT_BW_STATUS, []);
+  const res = await sshAction('outil de coffre disponible (vw.sh, sinon bw)', SCRIPT_VAULT_TOOL, []);
+  const manual = () => {
+    say(`  À la main, dans Vaultwarden : nouvel élément « ${VAULT_ITEM_NAME} », mot de passe = le jeton.`);
+    say(`  Pour copier le jeton sans l'afficher (depuis ton Mac) : ${bold(clipboardCommand(HOTE))}`);
+    say('  Puis vide le presse-papiers en copiant autre chose.');
+  };
   if (DRY) {
-    say(`  ${dim('[simulation]')} si le coffre est déverrouillé et que tu acceptes : élément « ${BW_ITEM_NAME} » créé par`);
-    say(`  ${dim('[simulation]')}   ssh ${HOTE} "bw encode | bw create item", le JSON de l'élément passé par l'entrée standard.`);
+    const params = vwWriteParams({ accountId, filter: ipFilter });
+    say(`  ${dim('[simulation]')} avec vw.sh (si l'élément existe déjà, je demande avant de le mettre à jour) :`);
+    say(`  ${dim(`    ssh ${sshArgs(HOTE, '<script : copie sans retour à la ligne, puis vw.sh ecrire>', params).join(' ')}`)}`);
+    say(`  ${dim('[simulation]')} sans vw.sh mais avec bw déverrouillé : ssh ${HOTE} "bw encode | bw create item", JSON par l'entrée standard.`);
     return;
   }
-  const status = parseBwStatus(res.out);
-  const manual = () =>
-    say(`  À la main, dans Vaultwarden : nouvel élément « ${BW_ITEM_NAME} », mot de passe = le jeton.`);
-  if (status === 'absent') {
-    warn(`La CLI bw n'est pas installée sur ${HOTE}.`);
+  const tool = parseBwStatus(res.out);
+
+  if (tool === 'vw') {
+    const exists = (await ssh(SCRIPT_VW_EXISTS, [VAULT_ITEM_NAME], { allowFail: true })).out.trim();
+    const question = exists === 'present' ? `« ${VAULT_ITEM_NAME} » existe déjà : mettre à jour son mot de passe avec ce jeton ?` : `Ranger le jeton dans le coffre (élément « ${VAULT_ITEM_NAME} », collection du compte machine) ?`;
+    if (!(await yes(question, exists === 'present' ? 'n' : 'o'))) {
+      manual();
+      return;
+    }
+    say(`  → vw.sh ecrire (le jeton est lu dans le fichier posé, jamais en argument)`);
+    const r = await ssh(SCRIPT_VW_WRITE, vwWriteParams({ accountId, filter: ipFilter }), { allowFail: true });
+    if (r.code === 0) {
+      ok(`Coffre : ${r.out.trim().split('\n').pop() || 'élément enregistré'}.`);
+      return;
+    }
+    warn(`vw.sh a échoué (code ${r.code}).${r.err.trim() ? `\n  ${r.err.trim().split('\n').slice(-3).join('\n  ')}` : ''}`);
+    say('  Une erreur « EEXIST » de bunx est passagère : relance ce script, ou range le jeton à la main.');
     manual();
     return;
   }
-  if (status !== 'unlocked') {
-    warn(`Coffre ${status === 'locked' ? 'verrouillé' : status === 'unauthenticated' ? 'non connecté' : 'dans un état inconnu'} pour une session ssh non interactive.`);
-    say(`  Le déverrouillage donne une clé de session (BW_SESSION) que ce script ne manipule pas, et une session ssh`);
-    say(`  non interactive ne voit que celle de ton environnement de connexion. Range le jeton toi-même :`);
+  if (tool === 'absent') {
+    warn(`Ni vw.sh ni bw sur ${HOTE}.`);
     manual();
-    say('  Je continue sans le coffre.');
     return;
   }
-  if (!(await yes(`Ranger le jeton dans le coffre (élément « ${BW_ITEM_NAME} ») ?`, 'o'))) {
+  if (tool !== 'unlocked') {
+    warn(`Coffre bw ${tool === 'locked' ? 'verrouillé' : tool === 'unauthenticated' ? 'non connecté' : 'dans un état inconnu'} pour une session ssh non interactive.`);
+    say('  Le déverrouillage donne une clé de session (BW_SESSION) que ce script ne manipule pas. Range le jeton toi-même :');
+    manual();
+    return;
+  }
+  if (!(await yes(`Ranger le jeton dans le coffre (élément « ${VAULT_ITEM_NAME} ») ?`, 'o'))) {
     manual();
     return;
   }
   const r = await ssh(SCRIPT_BW_CREATE, [], { input: JSON.stringify(bwItem(token, accountId)), allowFail: true });
-  if (r.code === 0 && r.out.trim().endsWith('cree')) {
-    ok('Élément créé. Pense à lancer « bw sync » ailleurs si besoin.');
-  } else {
+  if (r.code === 0 && r.out.trim().endsWith('cree')) ok('Élément créé.');
+  else {
     warn(`La création a échoué (code ${r.code}).`);
     manual();
   }
@@ -398,8 +425,8 @@ async function stepEnd() {
   const host = domain?.host ?? 'vigie.<ton-domaine>';
   say(`  • Le pilote passe ${bold('toutes les heures, de 8 h 13 à 21 h 13 (heure de Paris)')} et écrira l'instantané à son prochain passage.`);
   say(`  • Vérifie ensuite ${bold(`https://${host}/api/sessions`)} (dans le navigateur, derrière Access) : « snapshotAt » doit être récent.`);
-  say('  • Révoquer le jeton :');
-  for (const line of revokeHelp(HOTE)) say(`      ${line}`);
+  say(`  • ${bold('Révoquer le jeton')} :`);
+  for (const line of revokeHelp(HOTE)) say(`    ${line}`);
 }
 
 // ---------------------------------------------------------------------------

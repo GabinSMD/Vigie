@@ -7,10 +7,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readKvId } from '../mise-en-route/lib.mjs';
 import {
   ACCOUNT_FILE,
-  BW_ITEM_NAME,
+  VAULT_ITEM_LOGIN,
+  VAULT_ITEM_NAME,
   PILOTE_DIR,
   SCRIPT_BW_CREATE,
   SCRIPT_BW_STATUS,
+  SCRIPT_VAULT_TOOL,
+  SCRIPT_VW_EXISTS,
+  SCRIPT_VW_WRITE,
   SCRIPT_CF_GET,
   SCRIPT_EXISTING,
   SCRIPT_KV_TEST,
@@ -22,6 +26,7 @@ import {
   assertNoSecret,
   bwItem,
   checkTokenShape,
+  clipboardCommand,
   classifyCfError,
   explainFailure,
   interpretAccounts,
@@ -36,11 +41,13 @@ import {
   parseExisting,
   parseKvTest,
   parsePublicIp,
+  revokeHelp,
   runVerifications,
   shellQuote,
   shouldFallBack,
   sshArgs,
   verificationPlan,
+  vwWriteParams,
 } from './lib.mjs';
 
 const ROOT = join(import.meta.dirname, '..', '..');
@@ -48,7 +55,7 @@ const ROOT = join(import.meta.dirname, '..', '..');
 const FAKE_TOKEN = 'FAKE_tokenForTests_0123456789abcdefABCDE';
 const ACCOUNT = 'a'.repeat(32);
 const KV = 'b81d07e1897b44df8ae8d12cd6ce9ba2';
-const ALL_SCRIPTS = [SCRIPT_PUBLIC_IP, SCRIPT_EXISTING, SCRIPT_WRITE, SCRIPT_CF_GET, SCRIPT_KV_TEST, SCRIPT_BW_STATUS, SCRIPT_BW_CREATE];
+const ALL_SCRIPTS = [SCRIPT_PUBLIC_IP, SCRIPT_EXISTING, SCRIPT_WRITE, SCRIPT_CF_GET, SCRIPT_KV_TEST, SCRIPT_BW_STATUS, SCRIPT_BW_CREATE, SCRIPT_VAULT_TOOL, SCRIPT_VW_EXISTS, SCRIPT_VW_WRITE];
 
 describe('parseArgs', () => {
   it('a des valeurs par défaut sûres', () => {
@@ -86,7 +93,7 @@ describe('commandes ssh', () => {
   it("aucun script distant ni aucun argument ne contient le jeton : il n'arrive que par l'entrée standard ou le fichier", () => {
     for (const script of ALL_SCRIPTS) {
       expect(script).not.toContain(FAKE_TOKEN);
-      for (const params of [[], [PILOTE_DIR], kvTestParams(PILOTE_DIR, KV, 'vigie-test-1')]) {
+      for (const params of [[], [PILOTE_DIR], kvTestParams(PILOTE_DIR, KV, 'vigie-test-1'), vwWriteParams({ accountId: ACCOUNT, filter: ['88.184.75.41'] })]) {
         expect(() => assertNoSecret(sshArgs('penny', script, params), [FAKE_TOKEN])).not.toThrow();
       }
     }
@@ -183,6 +190,86 @@ esac
       expect(a).not.toMatch(/values\/snapshot/);
     }
   });
+
+  /** Faux vw.sh : note ses arguments, copie le contenu du fichier reçu, et répond comme le vrai. */
+  const fakeVw = (behaviour = 'ok') => {
+    writeFileSync(
+      join(bin, 'vw.sh'),
+      `#!/bin/sh
+case "$1" in
+  liste) printf 'Cloudflare — jeton DNS Traefik (ACME)\\nCloudflare — jeton KV du pilote Vigie\\n' ;;
+  ecrire)
+    printf 'ARGS %s\\n' "$*" >> "$FAKE_LOG"
+    printf 'FILE ' >> "$FAKE_LOG"; cat "$4" >> "$FAKE_LOG"; printf '|\\n' >> "$FAKE_LOG"
+    printf 'TMP %s\\n' "$4" >> "$FAKE_LOG"
+    echo "Saved lockfile" >&2
+    ${behaviour === 'ok' ? 'echo "cree : $2"' : 'echo "error: Failed to link @bitwarden/cli: EEXIST" >&2; exit 1'} ;;
+esac
+`,
+    );
+    chmodSync(join(bin, 'vw.sh'), 0o755);
+  };
+
+  it('SCRIPT_VAULT_TOOL préfère vw.sh', () => {
+    fakeVw();
+    expect(parseBwStatus(runRemote(SCRIPT_VAULT_TOOL, []).stdout.toString())).toBe('vw');
+  });
+
+  it('SCRIPT_VW_EXISTS reconnaît le nom exact', () => {
+    fakeVw();
+    expect(runRemote(SCRIPT_VW_EXISTS, [VAULT_ITEM_NAME]).stdout.toString().trim()).toBe('present');
+    expect(runRemote(SCRIPT_VW_EXISTS, ['Cloudflare — jeton KV']).stdout.toString().trim()).toBe('absent');
+  });
+
+  it('SCRIPT_VW_WRITE passe à vw.sh une copie sans retour à la ligne, jamais le jeton en argument, puis la supprime', () => {
+    fakeVw();
+    const target = join(dir, 'pilote-cloud');
+    runRemote(SCRIPT_WRITE, [target], `${FAKE_TOKEN}\n${ACCOUNT}\n`);
+    const params = vwWriteParams({ accountId: ACCOUNT, filter: ['88.184.75.41', '2a01:e0a:e12:ca50::/64'] });
+    params[0] = target;
+    const r = runRemote(SCRIPT_VW_WRITE, params);
+    expect(r.status).toBe(0);
+    expect(r.stdout.toString().trim()).toBe(`cree : ${VAULT_ITEM_NAME}`);
+    const lines = readFileSync(log, 'utf8').split('\n');
+    const args = lines.find((l) => l.startsWith('ARGS'));
+    expect(args).toContain(`ecrire ${VAULT_ITEM_NAME} ${VAULT_ITEM_LOGIN}`);
+    expect(args).not.toContain(FAKE_TOKEN);
+    expect(lines).toContain(`FILE ${FAKE_TOKEN}|`);
+    const tmp = lines.find((l) => l.startsWith('TMP')).slice(4);
+    expect(() => statSync(tmp)).toThrow();
+  });
+
+  it('SCRIPT_VW_WRITE remonte l\'erreur de vw.sh et supprime quand même la copie', () => {
+    fakeVw('eexist');
+    const target = join(dir, 'pilote-cloud');
+    runRemote(SCRIPT_WRITE, [target], `${FAKE_TOKEN}\n${ACCOUNT}\n`);
+    const params = vwWriteParams({ accountId: ACCOUNT });
+    params[0] = target;
+    const r = runRemote(SCRIPT_VW_WRITE, params);
+    expect(r.status).toBe(4);
+    expect(r.stderr.toString()).toContain('EEXIST');
+    expect(r.stderr.toString()).not.toContain(FAKE_TOKEN);
+    const tmp = readFileSync(log, 'utf8').split('\n').find((l) => l.startsWith('TMP')).slice(4);
+    expect(() => statSync(tmp)).toThrow();
+  });
+});
+
+describe('coffre et révocation', () => {
+  it('vwWriteParams : note descriptive, aucun secret', () => {
+    const [d, name, login, url, note] = vwWriteParams({ accountId: ACCOUNT, filter: ['88.184.75.41'] });
+    expect([d, name, login, url]).toEqual([PILOTE_DIR, 'Cloudflare — jeton KV du pilote Vigie', 'pilote-vigie', 'https://dash.cloudflare.com/profile/api-tokens']);
+    expect(note).toContain(ACCOUNT);
+    expect(note).toContain('88.184.75.41');
+  });
+
+  it('clipboardCommand copie le jeton sans l\'afficher ni le mettre en argument', () => {
+    const cmd = clipboardCommand('root@100.97.239.90');
+    expect(cmd).toBe("ssh root@100.97.239.90 cat /mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token | tr -d '\\n' | pbcopy");
+  });
+
+  it('revokeHelp dit que ce n\'est pas à faire maintenant', () => {
+    expect(revokeHelp('penny')[0]).toMatch(/rien à faire maintenant/);
+  });
 });
 
 describe('lecture des sorties', () => {
@@ -225,7 +312,7 @@ describe('lecture des sorties', () => {
 
   it('bwItem ne met le jeton que dans login.password', () => {
     const item = bwItem(FAKE_TOKEN, ACCOUNT, new Date('2026-11-27T10:00:00Z'));
-    expect(item.name).toBe(BW_ITEM_NAME);
+    expect(item.name).toBe(VAULT_ITEM_NAME);
     expect(item.login.password).toBe(FAKE_TOKEN);
     expect(JSON.stringify({ ...item, login: { ...item.login, password: null } })).not.toContain(FAKE_TOKEN);
     expect(item.notes).toContain('2026-11-27');

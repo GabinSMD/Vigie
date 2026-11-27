@@ -86,7 +86,9 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
     npm run jeton-pilote               # ou --dry-run pour voir ce qu'il ferait, --hote <alias> si penny a un autre nom
     ```
 
-    Le script relève l'adresse publique de penny, te guide pour créer le jeton dans Cloudflare (permission **Compte → Workers KV Storage → Modifier**, rien d'autre, limité au compte de Vigie, **filtrage IP sur penny**), te demande de le coller sans l'afficher, le vérifie avec l'API Cloudflare (`/user/tokens/verify`, compte, accès au KV de `worker/wrangler.toml`), pose les deux fichiers sur penny, fait un essai bout en bout depuis penny (écrit, relit et supprime la clé `vigie-test-jeton`, jamais `snapshot`), puis propose de ranger le jeton dans Vaultwarden si `bw` est déverrouillé sur penny. Le jeton ne passe que par l'entrée standard de `ssh` : jamais sur le disque du Mac, jamais à l'écran, jamais en argument d'une commande.
+    Le script relève l'adresse publique de penny, te guide pour créer le jeton dans Cloudflare (permission **Compte → Workers KV Storage → Modifier**, rien d'autre, limité au compte de Vigie, **filtrage IP sur penny**), te demande de le coller sans l'afficher, le vérifie avec l'API Cloudflare (`/user/tokens/verify`, compte, accès au KV de `worker/wrangler.toml`), pose les deux fichiers sur penny, fait un essai bout en bout depuis penny (écrit, relit et supprime la clé `vigie-test-jeton`, jamais `snapshot`), puis propose de ranger le jeton dans Vaultwarden avec `vw.sh ecrire` sur penny (élément « Cloudflare — jeton KV du pilote Vigie », collection « Homelab — infra » du compte machine ; à défaut, `bw` s'il est déverrouillé). Le jeton ne passe que par l'entrée standard de `ssh` ou par le fichier posé : jamais sur le disque du Mac, jamais à l'écran, jamais en argument d'une commande.
+
+    Si `penny` n'est pas un alias ssh de ton Mac, donne l'adresse : `npm run jeton-pilote -- --hote root@<adresse Tailscale de penny>`. Les commandes de cette section marchent aussi dans fish : ce qui est entre apostrophes est exécuté par le shell de penny.
 
     Dans le filtrage IP, mets l'IPv4 publique de chez toi **et**, si ton réseau a de l'IPv6, son préfixe `/64` (le script les affiche) : sinon les appels qui partent en IPv6, ceux du pilote compris, sont refusés (erreur 9109). Jamais l'adresse Tailscale (`100.x.x.x`) : Cloudflare ne la voit pas.
 
@@ -101,7 +103,17 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
     echo '<identifiant du compte>' > cloudflare-account.id
     ```
 
-    Range aussi le jeton dans Vaultwarden. **Révoquer** : Cloudflare → *Mon profil* → *Jetons d'API* → le jeton → *Supprimer*, puis `rm` du fichier sur penny.
+    Range aussi le jeton dans Vaultwarden, toujours sans le mettre en argument (`vw.sh ecrire` lit un fichier ; on lui passe une copie sans le retour à la ligne final) :
+
+    ```sh
+    ssh penny 'set -eu; umask 077; t=$(mktemp); trap "rm -f \"$t\"" EXIT
+    tr -d "\n" < /mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token > "$t"
+    vw.sh ecrire "Cloudflare — jeton KV du pilote Vigie" pilote-vigie "$t" https://dash.cloudflare.com/profile/api-tokens'
+    ```
+
+    Une erreur `Failed to link @bitwarden/cli: EEXIST` vient du cache de `bunx` et passe en relançant. Pour le ranger à la main depuis ton Mac, copie-le sans l'afficher : `ssh penny cat /mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token | tr -d '\n' | pbcopy`.
+
+    **Révoquer**, plus tard et seulement si besoin (fuite, penny remplacé, arrêt de Vigie) : Cloudflare → *Jetons API* → le jeton → *Supprimer*, puis `rm` du fichier sur penny.
   - **Vérifier** : après le passage suivant (de 8 h 13 à 21 h 13, heure de Paris), `https://vigie.<ton-domaine>/api/sessions` renvoie un `snapshotAt` récent.
 
   Pour tester l'écran sans le pilote, tu peux écrire un instantané vide à la main :
