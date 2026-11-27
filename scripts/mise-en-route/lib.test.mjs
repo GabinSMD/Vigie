@@ -224,6 +224,9 @@ describe('wrangler.toml', () => {
     expect(readD1Id(repoToml)).toBe(PLACEHOLDER_D1_ID);
     expect(readVar(repoToml, 'ACCESS_TEAM_DOMAIN')).toBe('a-remplacer.cloudflareaccess.com');
     expect(readVar(repoToml, 'ACCESS_AUD')).toBe('a-remplacer');
+    expect(readVar(repoToml, 'ACCESS_ALLOWED_EMAIL')).toBe('a-remplacer@example.org');
+    expect(readVar(repoToml, 'ACCESS_PILOT_CLIENT_ID')).toBe('a-remplacer.access');
+    expect(readVar(setVar(toml, 'ACCESS_ALLOWED_EMAIL', 'toi+vigie@mondomaine.fr'), 'ACCESS_ALLOWED_EMAIL')).toBe('toi+vigie@mondomaine.fr');
     const id = '12345678-90ab-cdef-1234-567890abcdef';
     const next = setVar(setVar(setD1Id(toml, id), 'ACCESS_TEAM_DOMAIN', 'equipe.cloudflareaccess.com'), 'ACCESS_AUD', 'abc123def');
     expect(readD1Id(next)).toBe(id);
@@ -290,7 +293,7 @@ describe('Cloudflare Access', () => {
 
   it('protège tout le nom d\'hôte avec une seule adresse autorisée', () => {
     const body = accessAppBody(input);
-    expect(body).toMatchObject({ type: 'self_hosted', domain: 'vigie.mondomaine.fr', name: 'Vigie' });
+    expect(body).toMatchObject({ type: 'self_hosted', domain: 'vigie.mondomaine.fr', name: 'Vigie', same_site_cookie_attribute: 'lax' });
     expect(body.policies).toEqual([
       { name: 'Vigie : une seule adresse', decision: 'allow', include: [{ email: { email: 'toi@mondomaine.fr' } }], precedence: 1 },
     ]);
@@ -306,6 +309,9 @@ describe('Cloudflare Access', () => {
     const ouverte = { ...found, policies: [{ decision: 'allow', include: [{ everyone: {} }] }] };
     expect(accessAppUpToDate(ouverte, input)).toBe(false);
     expect(findAccessApp(apps, 'vigie.ailleurs.fr')).toBeNull();
+    // Cookie sans SameSite : pas à jour, la relance le règle.
+    expect(accessAppUpToDate({ ...found, same_site_cookie_attribute: 'none' }, input)).toBe(false);
+    expect(accessAppUpToDate({ ...found, same_site_cookie_attribute: undefined }, input)).toBe(false);
   });
 
   it('ajoute le jeton de service du pilote sans ouvrir l\'application à d\'autres', () => {

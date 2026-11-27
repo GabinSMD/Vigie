@@ -123,6 +123,8 @@ function setup(overrides: Partial<Env> = {}) {
     ACCESS_TEAM_DOMAIN: TEAM,
     ACCESS_AUD: AUD,
     PILOT_TOKEN,
+    ACCESS_ALLOWED_EMAIL: 'Gabin@Example.org ',
+    ACCESS_PILOT_CLIENT_ID: PILOTE.common_name,
     ...overrides,
   };
   const deps: Deps = { fetch: fakeFetch(), projets, now: () => now, log: (l) => logs.push(l) };
@@ -147,7 +149,7 @@ async function asUser(ctx: Ctx, body: unknown, who: { email: string } | { common
 
 async function asPilot(ctx: Ctx, method: 'GET' | 'PATCH', path: string, body?: unknown, token: string | null = PILOT_TOKEN) {
   const jwt = await team.sign(claims(ctx.deps.now().getTime(), PILOTE));
-  const headers: Record<string, string> = { 'Cf-Access-Jwt-Assertion': jwt };
+  const headers: Record<string, string> = { 'Cf-Access-Jwt-Assertion': jwt, 'Content-Type': 'application/json' };
   if (token !== null) headers.Authorization = `Bearer ${token}`;
   return handle(new Request(url(path), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), ctx.env, ctx.deps);
 }
@@ -201,6 +203,101 @@ describe('POST /api/ordres : contrôle 1, identité Access', () => {
   });
 });
 
+describe('POST et PATCH /api/ordres : requêtes intersites (CSRF) et rôles', () => {
+  const post = async (ctx: Ctx, headers: Record<string, string>) => {
+    const jwt = await team.sign(claims(NOW.getTime(), GABIN));
+    return handle(
+      new Request(url('/api/ordres'), { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': jwt, ...headers }, body: JSON.stringify(answer('1039-critere-reprise', 'trois-verts')) }),
+      ctx.env,
+      ctx.deps,
+    );
+  };
+
+  it('415 sans `Content-Type: application/json` (formulaire « simple »), rien écrit', async () => {
+    const ctx = setup();
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x']) {
+      expect((await post(ctx, { 'Content-Type': type })).status).toBe(415);
+    }
+    expect((await post(ctx, {})).status).toBe(415);
+    expect(ctx.count('ordres')).toBe(0);
+    expect(ctx.count('journal')).toBe(0);
+  });
+
+  it('403 si `Origin` ou `Sec-Fetch-Site` désignent un autre site, rien écrit ; même origine acceptée', async () => {
+    const ctx = setup();
+    const json = { 'Content-Type': 'application/json' };
+    expect((await post(ctx, { ...json, Origin: 'https://attaquant.example.com' })).status).toBe(403);
+    expect((await post(ctx, { ...json, Origin: 'null' })).status).toBe(403);
+    expect((await post(ctx, { ...json, 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403);
+    expect((await post(ctx, { ...json, 'Sec-Fetch-Site': 'same-site' })).status).toBe(403);
+    expect(ctx.count('ordres')).toBe(0);
+    expect(ctx.count('journal')).toBe(0);
+    expect((await post(ctx, { 'Content-Type': 'application/json; charset=utf-8', Origin: 'https://vigie.example.org', 'Sec-Fetch-Site': 'same-origin' })).status).toBe(201);
+  });
+
+  it('PATCH du pilote : même garde (415 et 403), ordre inchangé', async () => {
+    const ctx = setup();
+    const ordre = await created(await asUser(ctx, answer('1039-critere-reprise', 'trois-verts')));
+    const jwt = await team.sign(claims(NOW.getTime(), PILOTE));
+    const patch = (headers: Record<string, string>) =>
+      handle(
+        new Request(url(`/api/ordres/${ordre.id}`), {
+          method: 'PATCH',
+          headers: { 'Cf-Access-Jwt-Assertion': jwt, Authorization: `Bearer ${PILOT_TOKEN}`, ...headers },
+          body: JSON.stringify({ status: 'pris' }),
+        }),
+        ctx.env,
+        ctx.deps,
+      );
+    expect((await patch({ 'Content-Type': 'text/plain' })).status).toBe(415);
+    expect((await patch({ 'Content-Type': 'application/json', Origin: 'https://attaquant.example.com' })).status).toBe(403);
+    expect(ctx.sqlite.prepare('SELECT status FROM ordres').all()).toEqual([{ status: 'en_attente' }]);
+  });
+
+  it('D2 : une autre adresse, même avec un JWT valide, reçoit 403 et rien n\'est écrit', async () => {
+    const ctx = setup();
+    const response = await asUser(ctx, answer('1039-critere-reprise', 'trois-verts'), { email: 'intrus@example.com' });
+    expect(response.status).toBe(403);
+    expect(ctx.count('ordres')).toBe(0);
+    expect(ctx.count('journal')).toBe(0);
+    // Pas de comparaison par suffixe ni par inclusion.
+    expect((await asUser(ctx, answer('1039-critere-reprise', 'trois-verts'), { email: 'xgabin@example.org' })).status).toBe(403);
+    expect((await asUser(ctx, answer('1039-critere-reprise', 'trois-verts'), { email: 'gabin@example.org.evil.com' })).status).toBe(403);
+    expect(ctx.count('ordres')).toBe(0);
+  });
+
+  it('ACCESS_ALLOWED_EMAIL absente : 401 access_not_configured', async () => {
+    for (const ACCESS_ALLOWED_EMAIL of [undefined, '  ']) {
+      const ctx = setup({ ACCESS_ALLOWED_EMAIL });
+      const response = await asUser(ctx, answer('1039-critere-reprise', 'trois-verts'));
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'access_not_configured' });
+    }
+  });
+
+  it('routes du pilote : une connexion personnelle avec le bon jeton reçoit 403 (GET et PATCH)', async () => {
+    const ctx = setup();
+    const ordre = await created(await asUser(ctx, answer('1039-critere-reprise', 'trois-verts')));
+    const jwt = await team.sign(claims(NOW.getTime(), GABIN));
+    const headers = { 'Cf-Access-Jwt-Assertion': jwt, Authorization: `Bearer ${PILOT_TOKEN}`, 'Content-Type': 'application/json' };
+    expect((await handle(new Request(url('/api/ordres'), { headers }), ctx.env, ctx.deps)).status).toBe(403);
+    const patch = new Request(url(`/api/ordres/${ordre.id}`), { method: 'PATCH', headers, body: JSON.stringify({ status: 'pris' }) });
+    expect((await handle(patch, ctx.env, ctx.deps)).status).toBe(403);
+    expect(ctx.sqlite.prepare('SELECT status FROM ordres').all()).toEqual([{ status: 'en_attente' }]);
+  });
+
+  it('routes du pilote : un autre jeton de service reçoit 403 ; ACCESS_PILOT_CLIENT_ID absent : 401', async () => {
+    const ctx = setup();
+    const jwt = await team.sign(claims(NOW.getTime(), { common_name: 'autre-client.access' }));
+    const headers = { 'Cf-Access-Jwt-Assertion': jwt, Authorization: `Bearer ${PILOT_TOKEN}` };
+    expect((await handle(new Request(url('/api/ordres'), { headers }), ctx.env, ctx.deps)).status).toBe(403);
+    const ctx2 = setup({ ACCESS_PILOT_CLIENT_ID: undefined });
+    const response = await asPilot(ctx2, 'GET', '/api/ordres');
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: 'access_not_configured' });
+  });
+});
+
 describe('POST /api/ordres : contrôles 2 et 3', () => {
   it('404 pour une décision ou un projet inconnus', async () => {
     const ctx = setup();
@@ -219,7 +316,11 @@ describe('POST /api/ordres : contrôles 2 et 3', () => {
   it('400 pour un corps illisible', async () => {
     const ctx = setup();
     const jwt = await team.sign(claims(NOW.getTime(), GABIN));
-    const response = await handle(new Request(url('/api/ordres'), { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': jwt }, body: '{pas du json' }), ctx.env, ctx.deps);
+    const response = await handle(
+      new Request(url('/api/ordres'), { method: 'POST', headers: { 'Cf-Access-Jwt-Assertion': jwt, 'Content-Type': 'application/json' }, body: '{pas du json' }),
+      ctx.env,
+      ctx.deps,
+    );
     expect(response.status).toBe(400);
   });
 

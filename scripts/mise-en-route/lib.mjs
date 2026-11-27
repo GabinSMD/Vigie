@@ -323,7 +323,7 @@ export function readVar(toml, key) {
 
 /** Remplace une variable existante de `[vars]` (valeur sans guillemet ni retour à la ligne). */
 export function setVar(toml, key, value) {
-  if (!/^[\w.:/-]{1,200}$/.test(value)) throw new Error(`Valeur inattendue pour ${key}.`);
+  if (!/^[\w.:/@+-]{1,200}$/.test(value)) throw new Error(`Valeur inattendue pour ${key}.`);
   const lines = toml.split('\n');
   const section = sectionOf(lines, '[vars]');
   if (!section) throw new Error('Section [vars] introuvable dans wrangler.toml.');
@@ -405,6 +405,8 @@ export function accessAppBody({ host, email, serviceTokenId }) {
     type: 'self_hosted',
     domain: host,
     session_duration: '24h',
+    // Le cookie d'Access n'accompagne pas les requêtes venues d'un autre site (défense contre le CSRF, avec le Worker).
+    same_site_cookie_attribute: 'lax',
     app_launcher_visible: false,
     auto_redirect_to_identity: false,
     policies,
@@ -437,6 +439,7 @@ export const findAccessApp = (apps, host) =>
  */
 export function accessAppUpToDate(app, { host, email, serviceTokenId }) {
   if (!app || app.domain !== host || app.type !== 'self_hosted') return false;
+  if (app.same_site_cookie_attribute !== 'lax' && app.same_site_cookie_attribute !== 'strict') return false;
   const policies = app.policies ?? [];
   if (policies.length !== (serviceTokenId ? 2 : 1)) return false;
   const allow = policies.find((p) => p.decision === 'allow');

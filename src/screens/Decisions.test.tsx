@@ -534,6 +534,42 @@ describe('Décisions en données réelles', () => {
     expect(await within(card('Quel nom pour la page ?')).findByText(/Ton choix/)).toHaveTextContent('Ton choix : Tableau');
   });
 
+  const pending = { ...decisions, decisions: [{ ...decision, answer: { id: 'ord_A', status: 'en_attente' as const, optionId: 'b', createdAt: '2026-11-24T14:00:00Z', expiresAt: '2026-11-24T17:00:00Z' } }] };
+
+  it('« Modifier » refusé en 409 « Déjà transmise » : l’ancienne réponse reste, prise par le pilote, pas « Refusée »', async () => {
+    const user = userEvent.setup();
+    stubApi(() => reply(409, { error: 'deja_transmise', message: 'Déjà transmise : le pilote a pris ta réponse.' }));
+    renderLive(pending);
+    await user.click(within(card('Quel nom pour la page ?')).getByRole('button', { name: 'Modifier' }));
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getByRole('radio', { name: /Tableau/ }));
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+    expect(await screen.findByText('Pas modifiée : Déjà transmise : le pilote a pris ta réponse.')).toBeInTheDocument();
+    const after = card('Quel nom pour la page ?');
+    expect(within(after).getByText('Envoyée')).toBeInTheDocument();
+    expect(within(after).queryByText('Refusée')).not.toBeInTheDocument();
+    expect(after).toHaveTextContent('Ton choix : Tour de contrôle');
+    expect(after).toHaveTextContent('Le pilote est en train de la transmettre.');
+    expect(within(after).queryByRole('button', { name: /Modifier|Répondre à nouveau/ })).not.toBeInTheDocument();
+  });
+
+  it('« Modifier » refusé en 422 : message dans le formulaire, l’ancienne réponse reste active', async () => {
+    const user = userEvent.setup();
+    stubApi(() => reply(422, { error: 'option_inconnue', message: 'Option inconnue : la question a changé, réponds à nouveau.' }));
+    renderLive(pending);
+    await user.click(within(card('Quel nom pour la page ?')).getByRole('button', { name: 'Modifier' }));
+    const c = card('Quel nom pour la page ?');
+    await user.click(within(c).getByRole('radio', { name: /Tableau/ }));
+    await user.click(within(c).getByRole('button', { name: 'Envoyer' }));
+    expect(await within(c).findByRole('alert')).toHaveTextContent('Option inconnue');
+    expect(within(c).queryByText('Refusée')).not.toBeInTheDocument();
+    await user.click(within(c).getByRole('button', { name: 'Garder la réponse envoyée' }));
+    const after = card('Quel nom pour la page ?');
+    expect(within(after).getByText('Envoyée')).toBeInTheDocument();
+    expect(after).toHaveTextContent('Ton choix : Tour de contrôle');
+    expect(within(after).getByRole('button', { name: 'Modifier' })).toBeEnabled();
+  });
+
   it('refus du Worker (409) : « Refusée » avec sa raison, puis « Répondre à nouveau »', async () => {
     const user = userEvent.setup();
     stubApi(() => reply(409, { error: 'deja_transmise', message: 'Déjà transmise : le pilote a pris ta réponse.' }));

@@ -18,8 +18,8 @@ export const SESSION_EXPIRED = 'Ta connexion a expiré : recharge la page pour t
 export type SendResult =
   /** L'ordre est déposé : « Envoyée ». */
   | { kind: 'ok'; answer: DecisionAnswer }
-  /** Le Worker refuse la réponse (404, 409, 422) : « Refusée », avec sa raison. */
-  | { kind: 'refused'; answer: DecisionAnswer; message: string }
+  /** Le Worker refuse la réponse (404, 409, 422) : « Refusée », avec sa raison et son code (`deja_transmise`…). */
+  | { kind: 'refused'; answer: DecisionAnswer; message: string; code?: string }
   /** Rien n'est parti (réseau, connexion expirée, panne) : la réponse reste à envoyer. */
   | { kind: 'error'; message: string };
 
@@ -65,7 +65,12 @@ export async function postOrdre(apiUrl: string, req: OrdreRequest, fetchFn: Fetc
     const message = body?.message ?? 'Réponse refusée.';
     const now = new Date().toISOString();
     // Le texte refusé n'est pas gardé : il ressemble peut-être à un secret.
-    return { kind: 'refused', message, answer: { status: 'refuse', optionId: req.optionId, createdAt: now, expiresAt: now, reason: message } };
+    return {
+      kind: 'refused',
+      message,
+      ...(body?.error ? { code: body.error } : {}),
+      answer: { status: 'refuse', optionId: req.optionId, createdAt: now, expiresAt: now, reason: message },
+    };
   }
   return { kind: 'error', message: NETWORK_ERROR };
 }
@@ -96,13 +101,23 @@ export function useAnswerSender() {
     [dispatch],
   );
 
+  /**
+   * `previous` : la réponse déjà partie que tu modifies (« Modifier »). Un refus ne la remplace pas :
+   * 409 « Déjà transmise » → elle est affichée comme prise par le pilote ; autre refus → erreur de formulaire,
+   * l'ancienne réponse reste active côté Worker.
+   */
   const now = useCallback(
-    async (item: DecisionItem, optionId: string, text?: string, okMessage = 'Réponse envoyée.'): Promise<SendResult> => {
+    async (item: DecisionItem, optionId: string, text?: string, okMessage = 'Réponse envoyée.', previous?: DecisionAnswer): Promise<SendResult> => {
       const result = apiUrl ? await postOrdre(apiUrl, request(item, optionId, text)) : ({ kind: 'error', message: NETWORK_ERROR } as const);
+      if (result.kind === 'refused' && previous) {
+        if (result.code !== 'deja_transmise') return { kind: 'error', message: result.message };
+        dispatch({ type: 'ordre', itemId: item.id, answer: { ...previous, status: 'pris' }, message: `Pas modifiée : ${result.message}` });
+        return result;
+      }
       if (result.kind !== 'error') settle(item, result, okMessage);
       return result;
     },
-    [apiUrl, settle],
+    [apiUrl, dispatch, settle],
   );
 
   const later = useCallback(

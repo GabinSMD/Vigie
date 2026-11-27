@@ -82,7 +82,9 @@ export function DecisionCard({ item, primary, disabled, showProject = true, comp
       /* Oui/non en un tap (D13) : l'ordre ne part qu'à la fin des 5 s d'annulation. */
       sender.later(item, optionId, extra.message ?? 'Réponse envoyée.');
     } else {
-      const result = await sender.now(item, optionId, text, extra.message);
+      /* « Modifier » : la réponse déjà partie reste valable si la nouvelle est refusée. */
+      const previous = editing && view.phase === 'envoyee' && view.answer ? { status: 'en_attente' as const, ...view.answer } : undefined;
+      const result = await sender.now(item, optionId, text, extra.message, previous);
       if (result.kind === 'error') return result.message;
     }
     setEditing(null);

@@ -25,6 +25,10 @@ export interface Env extends GithubEnv, AccessEnv {
   VIGIE_DB?: D1Database;
   /** Jeton porteur du pilote (secret Wrangler), exigé en plus d'Access sur GET et PATCH /api/ordres. */
   PILOT_TOKEN?: string;
+  /** La seule adresse qui peut déposer un ordre (D2). Absente : POST /api/ordres répond 401. */
+  ACCESS_ALLOWED_EMAIL?: string;
+  /** Client ID du jeton de service Access du pilote, comparé à `common_name`. Absent : routes du pilote en 401. */
+  ACCESS_PILOT_CLIENT_ID?: string;
   /** Fichiers de l'app (`dist/`), servis par le même Worker (static assets). Absent en test. */
   ASSETS?: Fetcher;
 }
@@ -89,10 +93,21 @@ async function access(request: Request, env: Env, deps: Deps): Promise<Auth> {
   return { ok: false, response: json({ error: 'unauthorized', message: MESSAGES.unauthorized }, 401) };
 }
 
-/** Le pilote : Access (jeton de service) puis `Authorization: Bearer <PILOT_TOKEN>`. */
+const notConfigured = () => json({ error: 'access_not_configured', message: MESSAGES.unauthorized }, 401);
+
+/**
+ * Le pilote : Access par son jeton de service (et lui seul : `common_name` = `ACCESS_PILOT_CLIENT_ID`),
+ * puis `Authorization: Bearer <PILOT_TOKEN>`. Une connexion personnelle reçoit 403, même avec le bon jeton.
+ */
 async function pilot(request: Request, env: Env, deps: Deps): Promise<Auth> {
   const auth = await access(request, env, deps);
   if (!auth.ok) return auth;
+  const clientId = env.ACCESS_PILOT_CLIENT_ID?.trim();
+  if (!clientId) return { ok: false, response: notConfigured() };
+  if (auth.identity.kind !== 'service' || auth.identity.clientId !== clientId) {
+    (deps.log ?? (() => {}))('ordres: route du pilote appelée sans son jeton de service');
+    return { ok: false, response: json({ error: 'forbidden', message: 'Réservé au pilote.' }, 403) };
+  }
   const header = request.headers.get('Authorization') ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!env.PILOT_TOKEN || !token || !(await sameSecret(token, env.PILOT_TOKEN))) {
@@ -102,13 +117,38 @@ async function pilot(request: Request, env: Env, deps: Deps): Promise<Auth> {
   return auth;
 }
 
+/**
+ * Garde contre les requêtes intersites (CSRF) sur POST et PATCH, avant de lire le corps :
+ * `Content-Type: application/json` exigé (un formulaire ne peut pas l'envoyer sans requête préalable CORS,
+ * à laquelle le Worker ne répond pas), puis `Sec-Fetch-Site` et `Origin`, s'ils sont présents, doivent
+ * désigner la même origine.
+ */
+function sameOriginJson(request: Request): Response | null {
+  const type = (request.headers.get('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase();
+  if (type !== 'application/json') return json({ error: 'unsupported_media_type', message: MESSAGES.bad_request }, 415);
+  const site = request.headers.get('Sec-Fetch-Site');
+  if (site !== null && site !== 'same-origin') return json({ error: 'cross_site', message: MESSAGES.cross_site }, 403);
+  const origin = request.headers.get('Origin');
+  if (origin !== null && origin !== new URL(request.url).origin) return json({ error: 'cross_site', message: MESSAGES.cross_site }, 403);
+  return null;
+}
+
 async function ordres(request: Request, env: Env, deps: Deps, pathname: string): Promise<Response> {
   const db = env.VIGIE_DB;
   if (pathname === '/api/ordres' && request.method === 'POST') {
     const auth = await access(request, env, deps);
     if (!auth.ok) return auth.response;
+    const guard = sameOriginJson(request);
+    if (guard) return guard;
     // Le pilote (jeton de service) ne crée jamais d'ordre : seule ta connexion le peut.
     if (auth.identity.kind !== 'user') return json({ error: 'forbidden', message: MESSAGES.forbidden }, 403);
+    // D2 : ta seule adresse, comparée exactement, même si la politique Access était élargie.
+    const allowed = env.ACCESS_ALLOWED_EMAIL?.trim().toLowerCase();
+    if (!allowed) return notConfigured();
+    if (auth.identity.email.trim().toLowerCase() !== allowed) {
+      (deps.log ?? (() => {}))('ordres: adresse non autorisée');
+      return json({ error: 'forbidden', message: MESSAGES.forbidden }, 403);
+    }
     if (!db) return json({ error: 'db_unavailable' }, 503);
     const req = parseOrdreRequest(await readJson(request));
     const projet = deps.projets.find((p) => p.id === req.projectId);
@@ -139,6 +179,8 @@ async function ordres(request: Request, env: Env, deps: Deps, pathname: string):
   if (match && request.method === 'PATCH') {
     const auth = await pilot(request, env, deps);
     if (!auth.ok) return auth.response;
+    const guard = sameOriginJson(request);
+    if (guard) return guard;
     if (!db) return json({ error: 'db_unavailable' }, 503);
     const ordre = await updateOrdre(db, match[1], parseUpdate(await readJson(request)), deps.now());
     const body: OrdreResponse = { ordre };
