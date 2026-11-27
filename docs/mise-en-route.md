@@ -75,7 +75,13 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
 
 ## 5. Ce qui reste après le script
 
-- **Instantané du pilote** : le pilote doit écrire l'instantané dans la clé KV `snapshot` au format de [`instantane-sessions.md`](./instantane-sessions.md). C'est un autre dépôt (hors de cette étape) ; en attendant, tu peux tester avec :
+- **Instantané du pilote** : le pilote écrit l'instantané dans la clé KV `snapshot` au format de [`instantane-sessions.md`](./instantane-sessions.md), à chaque passage (D6), même quand il n'a rien d'autre à faire.
+  - **Où vit le pilote** : une tâche programmée horaire (« Pilote des sessions cloud ») réveille une session Claude qui tourne sur penny. Ses consignes et ses scripts sont versionnés dans le dépôt `GabinSMD/homelab-config`, dossier `pilote-cloud/`, puis recopiés dans `/mnt/ssd/claude-work/pilote-cloud/` sur penny (voir le README de ce dossier).
+  - **Comment il écrit** : il construit le JSON à partir de `list_sessions`, puis lance `pilote-cloud/instantane.sh`, qui vérifie le format, refuse tout ce qui ressemble à un secret et écrit la clé avec l'API Cloudflare (travail suivi dans `GabinSMD/homelab-config#117`).
+  - **Ce que tu dois poser sur penny** : un jeton d'API Cloudflare avec la permission « Workers KV Storage : Edit » dans `/mnt/ssd/claude-work/pilote-cloud/cloudflare-kv.token` (`chmod 600`, copie dans Vaultwarden), et l'identifiant de ton compte Cloudflare dans `/mnt/ssd/claude-work/pilote-cloud/cloudflare-account.id`. Cloudflare ne permet pas de limiter ce jeton à un seul espace KV : il peut écrire dans tous les KV du compte. Tant que ces fichiers manquent, le pilote saute l'étape sans rien signaler, et l'app dit « Le pilote n'a pas encore écrit d'instantané ».
+  - **Vérifier** : après le passage suivant (de 8 h 13 à 21 h 13, heure de Paris), `https://vigie.<ton-domaine>/api/sessions` renvoie un `snapshotAt` récent.
+
+  Pour tester l'écran sans le pilote, tu peux écrire un instantané vide à la main :
 
   ```sh
   cd worker
