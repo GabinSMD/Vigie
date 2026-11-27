@@ -40,11 +40,14 @@ import {
   parseArgs,
   parseJsonArray,
   parseWhoamiAccounts,
+  pilotCredentialsChoice,
   readD1Id,
   readDomain,
   readKvId,
   readVar,
+  replacePilotToken,
   sameState,
+  secretAction,
   setD1Id,
   setDomain,
   setKvId,
@@ -664,25 +667,37 @@ async function stepSecrets(state) {
     const list = await wrangler(['secret', 'list', '--format', 'json'], { capture: true, env, allowFail: true });
     if (list.code === 0) present = parseJsonArray(list.out).map((s) => s.name);
   }
-  const values = {
-    GITHUB_APP_ID: async () => String(state.appId),
-    GITHUB_APP_PRIVATE_KEY: async () => readFile(PEM_PKCS8, 'utf8'),
-    GITHUB_INSTALLATIONS: async () => state.installations,
+  const pilotFile = existsSync(PILOT_FILE) ? JSON.parse(await readFile(PILOT_FILE, 'utf8')) : null;
+  // Chaque secret : sa valeur si elle est encore connue ici (l'état et les .pem disparaissent au nettoyage).
+  const secrets = {
+    GITHUB_APP_ID: { available: Boolean(state.appId), value: async () => String(state.appId) },
+    GITHUB_APP_PRIVATE_KEY: { available: existsSync(PEM_PKCS8), value: async () => readFile(PEM_PKCS8, 'utf8') },
+    GITHUB_INSTALLATIONS: { available: Boolean(state.installations), value: async () => state.installations },
     // Généré ici, jamais écrit dans le dépôt ; la même valeur va dans les secrets du pilote (affichée au nettoyage).
-    PILOT_TOKEN: async () => {
-      const token = newPilotToken();
-      const pilot = existsSync(PILOT_FILE) ? JSON.parse(await readFile(PILOT_FILE, 'utf8')) : {};
-      await writePrivate(PILOT_FILE, `${JSON.stringify({ ...pilot, pilotToken: token }, null, 2)}\n`);
-      return token;
+    PILOT_TOKEN: {
+      available: true,
+      replace: replacePilotToken({ from: options.from, pilotFile }),
+      value: async () => {
+        const token = newPilotToken();
+        const pilot = existsSync(PILOT_FILE) ? JSON.parse(await readFile(PILOT_FILE, 'utf8')) : {};
+        await writePrivate(PILOT_FILE, `${JSON.stringify({ ...pilot, pilotToken: token }, null, 2)}\n`);
+        return token;
+      },
     },
   };
-  for (const [name, value] of Object.entries(values)) {
-    if (present.includes(name) && options.from !== 'secrets') {
+  for (const [name, secret] of Object.entries(secrets)) {
+    const action = secretAction({ present: present.includes(name), replace: secret.replace ?? options.from === 'secrets', available: secret.available || DRY });
+    if (action === 'keep') {
       ok(`Secret ${name} déjà posé (reprends avec --from secrets pour le remplacer).`);
       continue;
     }
+    if (action === 'keep-unavailable') {
+      ok(`Secret ${name} déjà posé, gardé : sa valeur n'est plus disponible ici.`);
+      continue;
+    }
+    if (action === 'missing') throw new Stop(`Valeur manquante pour ${name} : reprends l'étape qui la produit.`);
     await act(`npx wrangler secret put ${name} (valeur passée par l'entrée standard)`, async () => {
-      const v = await value();
+      const v = await secret.value();
       if (!v || v === 'undefined') throw new Stop(`Valeur manquante pour ${name} : reprends l'étape qui la produit.`);
       await wrangler(['secret', 'put', name], { input: v, env });
     });
@@ -718,14 +733,29 @@ async function stepVerify(state) {
 
 async function stepCleanup(state) {
   cfToken = null;
-  if (existsSync(PILOT_FILE) && interactive && !DRY) {
+  // Identifiants du pilote : lisibles nulle part ailleurs (le secret du jeton de service n'est rendu qu'à sa création).
+  let keepPilotFile = false;
+  if (existsSync(PILOT_FILE) && !DRY) {
     say('  Le pilote a besoin de ses identifiants (secrets de l\'environnement du pilote, jamais dans un dépôt) :');
     say('  CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET (jeton de service Access) et VIGIE_PILOT_TOKEN. Voir docs/api-ordres.md.');
-    const answer = await ask('Tape « afficher » pour les afficher une seule fois, ou Entrée pour passer :');
-    if (answer === 'afficher') {
-      say(await readFile(PILOT_FILE, 'utf8'));
-      await pause('Appuie sur Entrée une fois les valeurs rangées : l\'écran sera effacé.');
-      process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
+    if (!interactive) {
+      keepPilotFile = true;
+      warn(`Pas de terminal : identifiants gardés dans ${PILOT_FILE} (droits 0600).`);
+      warn('Relance « npm run mise-en-route -- --from nettoyage » dans un terminal pour les afficher, puis ils seront supprimés.');
+    } else {
+      let choice = null;
+      while (!choice) {
+        choice = pilotCredentialsChoice(await ask('Tape « afficher » pour les afficher une seule fois, ou « jeter » pour y renoncer :'));
+        if (!choice) warn('Ils ne seront plus lisibles nulle part ensuite, et sans eux le pilote ne peut pas lire les ordres.');
+      }
+      if (choice === 'afficher') {
+        say(await readFile(PILOT_FILE, 'utf8'));
+        await pause('Appuie sur Entrée une fois les valeurs rangées : l\'écran sera effacé.');
+        process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
+      } else {
+        say('  Pour en refaire plus tard : « npm run mise-en-route -- --from secrets » pose un nouveau PILOT_TOKEN ;');
+        say('  pour le jeton de service, supprime « Vigie pilote » dans Zero Trust, puis « --from ordres ». Voir docs/mise-en-route.md.');
+      }
     }
   }
   if (existsSync(PEM_PKCS8) && interactive && !DRY) {
@@ -738,7 +768,11 @@ async function stepCleanup(state) {
       process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
     }
   }
-  await act(`suppression de ${SETUP} (clés .pem et état local)`, () => rm(SETUP, { recursive: true, force: true }));
+  if (keepPilotFile) {
+    await act(`suppression des clés .pem et de l'état local (${PILOT_FILE} gardé)`, async () => {
+      for (const file of [STATE_FILE, PEM_PKCS1, PEM_PKCS8]) await rm(file, { force: true });
+    });
+  } else await act(`suppression de ${SETUP} (clés .pem et état local)`, () => rm(SETUP, { recursive: true, force: true }));
   say();
   say(bold(DRY ? 'Fin de la simulation. Voici ce qui s\'affichera à la fin de la vraie mise en route :' : 'C\'est en place.'));
   say(`  • Ouvre https://${state.host ?? 'vigie.<domaine>'} : Access te demande ton adresse, puis Vigie affiche tes 8 projets.`);
@@ -771,6 +805,14 @@ async function main() {
     warn('worker/wrangler.toml est déjà configuré : Vigie semble déjà en place, et l\'état local a été supprimé.');
     warn('Tout reprendre créerait une deuxième GitHub App. Pour refaire une seule étape, utilise --from <étape> (voir --help).');
     if (!DRY && (await ask('Tape « continuer » pour tout reprendre quand même :')) !== 'continuer') throw new Stop('Arrêté, rien n\'a été modifié.');
+  }
+  // Reprise après le nettoyage (état supprimé) : le domaine se relit dans worker/wrangler.toml.
+  if (options.from && !state.host) {
+    const domain = readDomain(await readFile(TOML, 'utf8'));
+    if (domain && domain.host !== 'vigie.example.org') {
+      state.host = domain.host;
+      state.zone ??= domain.zone;
+    }
   }
   const fromIndex = options.from ? STEPS.findIndex((s) => s.id === options.from) : 0;
   if (options.from) state.done = state.done.filter((id) => STEPS.findIndex((s) => s.id === id) < fromIndex);
