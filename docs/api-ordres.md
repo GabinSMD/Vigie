@@ -22,10 +22,12 @@ App (toi, connexion Access)          Worker Vigie (D1 : ordres + journal)       
 
 | Route | Qui | Exigé |
 | --- | --- | --- |
-| `POST /api/ordres` | toi, depuis l'app | JWT Access valide d'une **personne** (`email`). Un jeton de service reçoit 403 : le pilote ne crée jamais d'ordre. |
-| `GET /api/ordres`, `PATCH /api/ordres/:id` | le pilote | JWT Access valide (jeton de service « Vigie pilote ») **et** `Authorization: Bearer <PILOT_TOKEN>`. |
+| `POST /api/ordres` | toi, depuis l'app | JWT Access valide d'une **personne** dont l'`email` est exactement `ACCESS_ALLOWED_EMAIL` (casse et espaces autour ignorés), sinon 403. Un jeton de service reçoit 403 : le pilote ne crée jamais d'ordre. |
+| `GET /api/ordres`, `PATCH /api/ordres/:id` | le pilote | JWT Access valide du **jeton de service** dont le `common_name` est exactement `ACCESS_PILOT_CLIENT_ID` (une connexion personnelle ou un autre jeton : 403), **et** `Authorization: Bearer <PILOT_TOKEN>`. |
 
-Le Worker vérifie lui-même l'en-tête `Cf-Access-Jwt-Assertion` qu'Access ajoute à chaque requête : signature RS256 avec les clés publiques de l'équipe (`https://<équipe>.cloudflareaccess.com/cdn-cgi/access/certs`, gardées une heure, relues si la clé a tourné), émetteur, audience (`ACCESS_AUD`), `exp`/`nbf` (60 s de tolérance). Sans en-tête valide : **401**. Tant que `ACCESS_TEAM_DOMAIN` et `ACCESS_AUD` sont factices, toutes ces routes répondent 401.
+`POST` et `PATCH` sont aussi protégés contre les requêtes intersites (CSRF), avant toute lecture du corps : `Content-Type: application/json` obligatoire (sinon **415** ; un formulaire HTML ne peut pas l'envoyer sans requête préalable CORS, à laquelle le Worker ne répond pas), et **403** si `Sec-Fetch-Site` est présent et différent de `same-origin`, ou si `Origin` est présent et différent de l'origine de la requête. Le pilote envoie `Content-Type: application/json` sur ses `PATCH` ; un client hors navigateur n'envoie ni `Origin` ni `Sec-Fetch-Site`.
+
+Le Worker vérifie lui-même l'en-tête `Cf-Access-Jwt-Assertion` qu'Access ajoute à chaque requête : signature RS256 avec les clés publiques de l'équipe (`https://<équipe>.cloudflareaccess.com/cdn-cgi/access/certs`, gardées une heure, relues si la clé a tourné), émetteur, audience (`ACCESS_AUD`), `exp`/`nbf` (60 s de tolérance). Sans en-tête valide : **401**. Tant que `ACCESS_TEAM_DOMAIN` et `ACCESS_AUD` sont factices, toutes ces routes répondent 401 ; sans `ACCESS_ALLOWED_EMAIL` (resp. `ACCESS_PILOT_CLIENT_ID`), `POST` (resp. les routes du pilote) répondent 401 `access_not_configured`.
 
 `PILOT_TOKEN` est un secret Wrangler (32 octets aléatoires), comparé en temps constant ; absent côté Worker, toutes les routes du pilote répondent 401.
 
@@ -47,6 +49,8 @@ curl -sS "$VIGIE_URL/api/ordres?status=en_attente" \
   -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
   -H "Authorization: Bearer $VIGIE_PILOT_TOKEN"
+
+# Pour un PATCH, ajouter : -X PATCH -H "Content-Type: application/json" -d '{"status":"pris"}'
 ```
 
 ## 3. Routes
@@ -63,7 +67,7 @@ Corps (`OrdreRequest`, `src/data/api.ts`) :
 
 Contrôles, dans l'ordre du § 4.2 :
 
-1. identité Access d'une personne : sinon 401 (403 pour un jeton de service) ;
+1. identité Access d'une personne : sinon 401 (403 pour un jeton de service ou une autre adresse que `ACCESS_ALLOWED_EMAIL`), puis garde CSRF (415, 403) ;
 2. corps lisible (400), `type` dans la liste fermée (422 `type_inconnu`), décision connue du Worker pour ce projet (relue comme `GET /api/decisions`, 404 `decision_inconnue`), `optionId` parmi ses options (422 `option_inconnue`), texte présent si `freeText: obligatoire` (422 `texte_manquant`), absent si `non` (422 `texte_interdit`) ;
 3. texte de 2000 caractères au plus (422 `texte_trop_long`), filtre `looksLikeSecret` (422 `secret`, avec le message de l'écran) ;
 4. une seule réponse active : remplace l'ordre `en_attente`, 409 `deja_transmise` après `pris`, 409 `deja_repondue` après `fait` (sauf `kind: action`, où « Pas encore » ne clôt pas la décision) ;

@@ -43,6 +43,7 @@ export const MESSAGES = {
   unauthorized: 'Ta connexion a expiré : recharge la page pour te reconnecter.',
   forbidden: 'Seule ta connexion personnelle peut répondre à une décision.',
   bad_request: 'Requête illisible : recharge la page et réessaie.',
+  cross_site: "Requête venue d'un autre site : refusée.",
   type_inconnu: "Type d'ordre inconnu.",
   decision_inconnue: 'Décision introuvable : elle a peut-être été retirée ou close entre-temps.',
   option_inconnue: 'Option inconnue : la question a changé, réponds à nouveau.',

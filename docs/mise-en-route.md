@@ -22,7 +22,7 @@ Pour voir ce qu'il va faire sans rien toucher : `npm run mise-en-route -- --dry-
 
 Le script s'arrête proprement en cas de problème. Relance-le : les étapes déjà faites sont sautées (l'état est gardé dans `.vigie-setup/`, ignoré par git, droits 0600, supprimé à la fin). Pour refaire une étape précise : `npm run mise-en-route -- --from <étape>` (`--help` donne la liste : `questions`, `github-app`, `cle`, `installations`, `cloudflare`, `access`, `ordres`, `deploiement`, `secrets`, `verification`, `nettoyage`).
 
-**Vigie déjà en place (avant la file des ordres)** : lance seulement `npm run mise-en-route -- --from ordres`. Le script crée la base D1 et ses tables, le jeton de service du pilote, renseigne `worker/wrangler.toml` (identifiant de la base, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`), redéploie, pose `PILOT_TOKEN` (les secrets GitHub déjà posés ne sont pas touchés), vérifie Access et t'affiche une fois les identifiants du pilote. **À faire avant tout autre déploiement** : tant que `database_id` vaut `00000000-…`, `wrangler deploy` refuse la configuration.
+**Vigie déjà en place (avant la file des ordres)** : lance seulement `npm run mise-en-route -- --from ordres`. Le script crée la base D1 et ses tables, le jeton de service du pilote, renseigne `worker/wrangler.toml` (identifiant de la base, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_ALLOWED_EMAIL`, `ACCESS_PILOT_CLIENT_ID`), règle le cookie d'Access en `SameSite=Lax`, redéploie, pose `PILOT_TOKEN` (les secrets GitHub déjà posés ne sont pas touchés), vérifie Access et t'affiche une fois les identifiants du pilote. **À faire avant tout autre déploiement** : tant que `database_id` vaut `00000000-…`, `wrangler deploy` refuse la configuration.
 
 ## 2. Ce que tu fais à la main pendant le script
 
@@ -63,8 +63,8 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
 3. **Conversion de la clé** PKCS#1 → PKCS#8 avec `node:crypto` (pas besoin d'openssl).
 4. **Installations.** Ouvre `https://github.com/apps/<nom>/installations/new`, interroge `GET /app/installations` (JWT de l'App) jusqu'à trouver les trois comptes, liste les dépôts de chaque installation (`GET /installation/repositories`) et les compare à `config/projets.json`. Construit `GITHUB_INSTALLATIONS`.
 5. **Cloudflare.** `wrangler whoami` (sinon `wrangler login`), création de l'espace KV `VIGIE_SNAPSHOT` s'il n'existe pas, puis modification ciblée de `worker/wrangler.toml` : l'identifiant du KV et le domaine, rien d'autre.
-6. **Cloudflare Access**, par l'API et ton jeton : crée (ou met à jour) une application *self-hosted* sur `vigie.<ton-domaine>` avec une seule politique *Allow* limitée à ton adresse (plus, si elle existe déjà, la règle du pilote posée à l'étape suivante).
-7. **File des ordres** : crée la base D1 `vigie` si elle n'existe pas (`wrangler d1 create vigie`), écrit son identifiant dans `worker/wrangler.toml`, applique les migrations (`wrangler d1 migrations apply vigie --remote` : tables `ordres` et `journal`, voir `worker/migrations/`). Crée le jeton de service Access « Vigie pilote » (valable un an) et ajoute à l'application une règle *Service Auth* pour lui seul. Écrit `ACCESS_TEAM_DOMAIN` (domaine de ton équipe) et `ACCESS_AUD` (audience de l'application) dans `[vars]` : le Worker s'en sert pour vérifier l'en-tête signé d'Access sur `/api/ordres`.
+6. **Cloudflare Access**, par l'API et ton jeton : crée (ou met à jour) une application *self-hosted* sur `vigie.<ton-domaine>` avec une seule politique *Allow* limitée à ton adresse (plus, si elle existe déjà, la règle du pilote posée à l'étape suivante), et le cookie d'Access en `SameSite=Lax` : il n'accompagne pas les requêtes venues d'un autre site.
+7. **File des ordres** : crée la base D1 `vigie` si elle n'existe pas (`wrangler d1 create vigie`), écrit son identifiant dans `worker/wrangler.toml`, applique les migrations (`wrangler d1 migrations apply vigie --remote` : tables `ordres` et `journal`, voir `worker/migrations/`). Crée le jeton de service Access « Vigie pilote » (valable un an) et ajoute à l'application une règle *Service Auth* pour lui seul. Écrit dans `[vars]` : `ACCESS_TEAM_DOMAIN` (domaine de ton équipe) et `ACCESS_AUD` (audience de l'application), avec lesquels le Worker vérifie l'en-tête signé d'Access sur `/api/ordres` ; `ACCESS_ALLOWED_EMAIL` (ta seule adresse, D2 : toute autre reçoit 403, même si la politique Access était élargie) ; `ACCESS_PILOT_CLIENT_ID` (seul ce jeton de service ouvre les routes du pilote). Tant que l'une manque ou reste factice, `/api/ordres` répond 401 ou 403.
 8. **Build et déploiement** : `npm run build` avec `VITE_API_URL=/`, puis `npx wrangler deploy`. Le script refuse de déployer si l'étape Access n'est pas faite.
 9. **Secrets** : `wrangler secret put` pour `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_INSTALLATIONS` et `PILOT_TOKEN` (32 octets aléatoires générés par le script), valeurs passées par l'entrée standard (jamais en argument de commande, jamais affichées).
 10. **Vérification** : appelle `https://vigie.<ton-domaine>/api/projets` sans être connecté. Access doit bloquer (redirection vers la page de connexion, ou 401/403). Sinon, le script le dit en rouge, te dit comment couper l'accès, et s'arrête.
@@ -98,7 +98,7 @@ Le script te le demande au bon moment ; voici la liste pour savoir à quoi t'att
 - **Le pilote et les ordres** : le pilote lit les ordres `en_attente` à chaque passage, les marque `pris`, transmet la réponse, puis `fait` ou `refuse`. L'API, son authentification (jeton de service Access + `PILOT_TOKEN`) et ce qu'il doit poser dans ses secrets sont décrits dans [`api-ordres.md`](./api-ordres.md). L'exécution elle-même se code dans le dépôt du pilote. Tant que le pilote ne lit pas la file, tes réponses expirent (« Pas partie ») : rien n'est perdu, tu peux les renvoyer.
 - **Nouvelle migration** (fichier ajouté dans `worker/migrations/`) : `cd worker && npx wrangler d1 migrations apply vigie --remote`, avant le déploiement.
 - **Redéployer après une modification** : `npm run build` avec `VITE_API_URL=/`, puis `cd worker && npx wrangler deploy` (ou `npm run mise-en-route -- --from deploiement`, qui garde l'ordre et la vérification).
-- `worker/wrangler.toml` contient maintenant ton domaine, l'identifiant du KV, celui de la base D1, `ACCESS_TEAM_DOMAIN` et `ACCESS_AUD` : ce ne sont pas des secrets, tu peux les committer.
+- `worker/wrangler.toml` contient maintenant ton domaine, l'identifiant du KV, celui de la base D1, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_ALLOWED_EMAIL` et `ACCESS_PILOT_CLIENT_ID` : ce ne sont pas des secrets, tu peux les committer (ton adresse sera alors visible dans le dépôt ; si tu préfères, pose `ACCESS_ALLOWED_EMAIL` en secret avec `npx wrangler secret put ACCESS_ALLOWED_EMAIL` et retire la ligne de `[vars]`).
 
 ## En local, sans rien déployer
 
@@ -153,6 +153,7 @@ Dans `worker/wrangler.toml` : colle l'identifiant rendu dans `id = "…"` sous `
 1. Cloudflare → *Zero Trust* → *Access* → *Applications* → **Add an application** → *Self-hosted*.
 2. *Application domain* : `vigie.<ton-domaine>` (tout le nom d'hôte : l'app **et** `/api/*`).
 3. Politique *Allow* : règle *Emails* = **ta seule adresse**. Connexion par code à usage unique par e-mail (ou GitHub).
+4. *Settings* (ou *Advanced settings*) de l'application → *Cookie settings* → **SameSite attribute** = **Lax** (conseillé : le cookie d'Access ne part pas avec une requête venue d'un autre site).
 
 ### A5 bis. File des ordres (base D1, accès du pilote)
 
@@ -167,7 +168,7 @@ Puis dans Cloudflare → *Zero Trust* :
 
 1. *Access* → *Service Auth* → *Service Tokens* → **Create Service Token**, nom `Vigie pilote`, durée 1 an. Note le *Client ID* et le *Client Secret* (affiché une seule fois) pour les secrets du pilote.
 2. *Access* → *Applications* → Vigie → *Policies* → **Add a policy** : action **Service Auth**, règle *Service Token* = `Vigie pilote`. Rien d'autre.
-3. Dans `worker/wrangler.toml`, section `[vars]` : `ACCESS_TEAM_DOMAIN` = le domaine de ton équipe (*Settings* → *Custom Pages* ou *General* : `<équipe>.cloudflareaccess.com`), `ACCESS_AUD` = l'*Application Audience (AUD) Tag* de l'application Vigie (onglet *Overview*).
+3. Dans `worker/wrangler.toml`, section `[vars]` : `ACCESS_TEAM_DOMAIN` = le domaine de ton équipe (*Settings* → *Custom Pages* ou *General* : `<équipe>.cloudflareaccess.com`), `ACCESS_AUD` = l'*Application Audience (AUD) Tag* de l'application Vigie (onglet *Overview*), `ACCESS_ALLOWED_EMAIL` = ta seule adresse, `ACCESS_PILOT_CLIENT_ID` = le *Client ID* du jeton « Vigie pilote ».
 
 ### A6. Construire l'app et déployer le Worker
 

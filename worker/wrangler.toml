@@ -12,17 +12,20 @@ workers_dev = false
 preview_urls = false
 
 # Domaine personnalisé : tout le nom d'hôte (l'app et /api/*). Cloudflare Access protège l'ensemble.
-# À REMPLACER : « vigie.example.org » par ton sous-domaine, « example.org » par ta zone (décision D9).
+# Ton sous-domaine et ta zone (décision D9), écrits par la mise en route (étape cloudflare).
 routes = [
   { pattern = "vigie.gabin-simond.fr", zone_name = "gabin-simond.fr", custom_domain = true }
 ]
 
 # Cloudflare Access (variables, pas des secrets) : le Worker vérifie le JWT `Cf-Access-Jwt-Assertion`
 # sur /api/ordres avec les clés de ton équipe Access et l'audience de l'application « Vigie ».
-# À REMPLACER : la mise en route les écrit (étape access). Tant qu'elles sont factices, /api/ordres répond 401.
+# ACCESS_ALLOWED_EMAIL : la seule adresse qui peut répondre (D2) ; ACCESS_PILOT_CLIENT_ID : Client ID du jeton
+# de service du pilote. À REMPLACER : la mise en route les écrit (étape ordres). Tant qu'elles sont factices, /api/ordres répond 401 ou 403.
 [vars]
 ACCESS_TEAM_DOMAIN = "a-remplacer.cloudflareaccess.com"
 ACCESS_AUD = "a-remplacer"
+ACCESS_ALLOWED_EMAIL = "a-remplacer@example.org"
+ACCESS_PILOT_CLIENT_ID = "a-remplacer.access"
 
 # Garde routes, workers_dev, etc. AU-DESSUS de [vars] et de [assets] : en TOML, une clé placée dessous irait dans [assets].
 # L'app est construite dans ../dist (`npm run build` à la racine, avec VITE_API_URL=/).

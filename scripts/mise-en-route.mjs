@@ -605,7 +605,7 @@ async function stepOrdres(state) {
     say(`  ${dim('[simulation]')} GET ${CF}/accounts/<compte>/access/service_tokens, puis POST « ${PILOT_SERVICE_TOKEN} » s'il n'existe pas`);
     say(`  ${dim('[simulation]')} PUT de l'application Access : règle « Service Auth » pour ce jeton, en plus de ton adresse`);
     say(`  ${dim('[simulation]')} GET ${CF}/accounts/<compte>/access/organizations (domaine de l'équipe) et aud de l'application`);
-    say(`  ${dim('[simulation]')} worker/wrangler.toml : [vars] ACCESS_TEAM_DOMAIN et ACCESS_AUD`);
+    say(`  ${dim('[simulation]')} worker/wrangler.toml : [vars] ACCESS_TEAM_DOMAIN, ACCESS_AUD, ACCESS_ALLOWED_EMAIL et ACCESS_PILOT_CLIENT_ID`);
     return;
   }
   await askCfToken(CF_RIGHTS);
@@ -638,9 +638,17 @@ async function stepOrdres(state) {
   const org = await cloudflare(`/accounts/${state.accountId}/access/organizations`);
   if (!org?.auth_domain || !app?.aud) throw new Stop('Domaine de l\'équipe Access ou aud de l\'application introuvable.');
   const current = await readFile(TOML, 'utf8');
-  const next = setVar(setVar(current, 'ACCESS_TEAM_DOMAIN', org.auth_domain), 'ACCESS_AUD', app.aud);
+  const vars = {
+    ACCESS_TEAM_DOMAIN: org.auth_domain,
+    ACCESS_AUD: app.aud,
+    // D2 : le Worker refuse toute autre adresse, même si la politique Access était élargie.
+    ACCESS_ALLOWED_EMAIL: state.email.trim().toLowerCase(),
+    // Seul ce jeton de service ouvre les routes du pilote.
+    ACCESS_PILOT_CLIENT_ID: token.client_id,
+  };
+  const next = Object.entries(vars).reduce((toml, [key, value]) => setVar(toml, key, value), current);
   if (next === current) ok('worker/wrangler.toml : variables Access déjà à jour.');
-  else await act(`worker/wrangler.toml : ACCESS_TEAM_DOMAIN = ${org.auth_domain}, ACCESS_AUD`, () => writeFile(TOML, next));
+  else await act(`worker/wrangler.toml : ${Object.keys(vars).join(', ')}`, () => writeFile(TOML, next));
   if (readVar(next, 'ACCESS_AUD') !== app.aud) throw new Stop('ACCESS_AUD non écrit.');
 }
 
