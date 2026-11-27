@@ -76,7 +76,9 @@ Recommandation : **Cloudflare**, **un seul Worker** qui sert l'app (static asset
 
 ## 6. Coûts : point ouvert
 
-**Vérifié le 24/11/2026 : hypothèse nuancée.** La documentation officielle dit seulement qu'une session cloud « compte dans les limites de ton forfait » et qu'il n'y a pas de facturation séparée de la VM : pas de coût par session côté produit. Côté outils, un indice disait que `get_session` (`claude-code-remote`) renvoie `external_metadata.usage.cost_usd`. Sur la session qui a codé cette étape, `get_session` renvoie bien `external_metadata` (modèle, jetons de contexte, limites de débit…) mais **sans** champ `usage` ni `cost_usd` : le champ n'a pas été observé. Il peut n'exister que pour certaines sessions ou après un tour terminé ; **le pilote doit le vérifier sur ses propres lectures** avant de s'y fier. L'instantané prévoit donc un `costUsd` facultatif (voir `docs/instantane-sessions.md`), ignoré par l'écran. Trois pistes, de la plus simple à la plus juste :
+**Vérifié le 24/11/2026 : hypothèse nuancée.** La documentation officielle dit seulement qu'une session cloud « compte dans les limites de ton forfait » et qu'il n'y a pas de facturation séparée de la VM : pas de coût par session côté produit. Côté outils, un indice disait que `get_session` (`claude-code-remote`) renvoie `external_metadata.usage.cost_usd`. Sur la session qui a codé cette étape, `get_session` renvoie bien `external_metadata` (modèle, jetons de contexte, limites de débit…) mais **sans** champ `usage` ni `cost_usd` : le champ n'a pas été observé. Il peut n'exister que pour certaines sessions ou après un tour terminé ; **le pilote doit le vérifier sur ses propres lectures** avant de s'y fier.
+
+**Observé le 27/11/2026** : `get_session` sur la session du pilote renvoie bien `external_metadata.usage.cost_usd` (un nombre en dollars, cumulé sur la session). Le champ existe donc, au moins pour une session qui a déjà fait plusieurs tours ; il peut manquer sur d'autres. Le pilote le recopie dans `costUsd` quand il est présent et l'omet sinon. Les coûts restent masqués en V1 (D7). L'instantané prévoit donc un `costUsd` facultatif (voir `docs/instantane-sessions.md`), ignoré par l'écran. Trois pistes, de la plus simple à la plus juste :
 1. masquer l'onglet Coût et les jauges tant qu'aucune source fiable n'existe ;
 2. une estimation (durée ou tours de session × forfait) clairement marquée « estimé » ;
 3. les chiffres de la console d'utilisation, s'il existe une API accessible à ton compte.
@@ -110,4 +112,4 @@ Chaque étape fait l'objet d'une issue et d'une PR séparées.
 
 Conséquence de D8 : les dépôts sont répartis sur trois comptes GitHub (`GabinSMD`, `SIMOND-ANCE-BROS`, `DentiSync`). La GitHub App « Vigie » devra être installée sur chacun, limitée aux dépôts listés ; le Worker garde un identifiant d'installation par compte.
 
-Les deux hypothèses « à vérifier » l'ont été le 24/11/2026 (§ 2 et § 6) : aucune ne change l'architecture. La seule inconnue restante : le champ `cost_usd` de `get_session`, à confirmer par le pilote.
+Les deux hypothèses « à vérifier » l'ont été le 24/11/2026 (§ 2 et § 6) : aucune ne change l'architecture. Le champ `cost_usd` de `get_session`, seule inconnue restante, a été observé le 27/11/2026 (§ 6).
