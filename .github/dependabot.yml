@@ -1,0 +1,23 @@
+# Dependency updates for GitHub Actions, including the shared workflow from
+# GabinSMD/shared-workflows pinned by commit SHA in strip-platform-footer.yml
+# (#28): that repository has no tags, so Dependabot proposes the latest commit
+# of its default branch. Same settings as SIMOND-ANCE-BROS/ecole-saas: monthly,
+# only versions published for at least 14 days, no major versions, every
+# update is a PR reviewed like any other, nothing is merged automatically.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: chore
+      include: scope
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      actions:
+        patterns: ["*"]
